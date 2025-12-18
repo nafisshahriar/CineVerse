@@ -1,0 +1,44 @@
+<!-- DEBUG: template is loading -->
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Movie Dashboard</title>
+  <link rel="stylesheet" href="/static/movies/styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Movie Dashboard</h1>
+    <form method="get" role="search" class="search">
+      <input type="search" name="q" placeholder="Search title or year..." value="{{ query|default:'' }}">
+      <button type="submit">Search</button>
+    </form>
+    <div class="grid">
+      {% for movie in movies %}
+        <a class="card" href="{{ movie.file_url }}" target="_blank" title="{{ movie.title }} ({{ movie.year }})">
+          <div class="poster">
+            {% if movie.poster_url %}
+              <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster">
+            {% else %}
+              <div class="no-poster">No poster</div>
+            {% endif %}
+          </div>
+          <div class="meta">
+            <div class="title">{{ movie.title }}</div>
+            <div class="year">{{ movie.year }}</div>
+            <div class="stats">
+              {% if movie.popularity %}<span>Popularity: {{ movie.popularity }}</span>{% endif %}
+              {% if movie.vote_count %}<span>Votes: {{ movie.vote_count }}</span>{% endif %}
+              {% if movie.vote_average %}<span>Avg: {{ movie.vote_average }}</span>{% endif %}
+            </div>
+          </div>
+        </a>
+      {% empty %}
+        <p>No movies found. Run the crawler: <code>python manage.py crawl_h5ai --url "$H5AI_ROOT_URL"</code></p>
+      {% endfor %}
+    </div>
+  </div>
+</body>
+</html>
