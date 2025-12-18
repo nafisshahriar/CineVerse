@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CineVerse - Movie Dashboard</title>
+  <meta name="description" content="Browse and discover movies from your collection">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/movies/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-content">
+      <h1 class="logo">🎬 CineVerse</h1>
+      <p class="subtitle">{{ total_count }} movies in your collection</p>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- Search & Filter Panel -->
+    <div class="filter-panel">
+      <div class="search-row">
+        <div class="search-container">
+          <input 
+            id="searchBox" 
+            type="search" 
+            class="search-input"
+            placeholder="Search movies by title or year..." 
+            value="{{ query|default:'' }}"
+            autocomplete="off"
+          >
+          <span class="search-icon">🔍</span>
+        </div>
+      </div>
+      
+      <div class="filter-row">
+        <div class="filter-group">
+          <label for="yearFrom">Year</label>
+          <div class="filter-range">
+            <select id="yearFrom" name="year_from" class="filter-select">
+              <option value="">From</option>
+              {% for y in years %}
+                <option value="{{ y }}" {% if filters.year_from == y|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
+              {% endfor %}
+            </select>
+            <span class="range-sep">–</span>
+            <select id="yearTo" name="year_to" class="filter-select">
+              <option value="">To</option>
+              {% for y in years %}
+                <option value="{{ y }}" {% if filters.year_to == y|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        
+        <div class="filter-group">
+          <label for="minRating">Rating</label>
+          <select id="minRating" name="min_rating" class="filter-select">
+            <option value="">Any</option>
+            {% for val, label in rating_options %}
+              <option value="{{ val }}" {% if filters.min_rating == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        
+        <div class="filter-group">
+          <label for="status">Status</label>
+          <select id="status" name="status" class="filter-select">
+            {% for val, label in status_options %}
+              <option value="{{ val }}" {% if filters.status == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        
+        <div class="filter-group">
+          <label for="sortBy">Sort</label>
+          <select id="sortBy" name="sort" class="filter-select">
+            {% for val, label in sort_options %}
+              <option value="{{ val }}" {% if filters.sort == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        
+        <button id="clearFilters" class="btn-clear" type="button">Clear All</button>
+      </div>
+    </div>
+
+    <!-- Movie Grid -->
+    <div id="movieGrid" class="grid">
+      {% include 'movies/_movie_cards.html' %}
+    </div>
+
+    <!-- Pagination -->
+    {% if movies.has_other_pages %}
+    <nav class="pagination" aria-label="Movie pagination">
+      {% if movies.has_previous %}
+        <a href="?page=1{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}" class="page-link" aria-label="First">«</a>
+        <a href="?page={{ movies.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}" class="page-link" aria-label="Previous">‹</a>
+      {% endif %}
+      
+      <span class="page-info">
+        Page {{ movies.number }} of {{ movies.paginator.num_pages }}
+      </span>
+      
+      {% if movies.has_next %}
+        <a href="?page={{ movies.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}" class="page-link" aria-label="Next">›</a>
+        <a href="?page={{ movies.paginator.num_pages }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}" class="page-link" aria-label="Last">»</a>
+      {% endif %}
+    </nav>
+    {% endif %}
+  </main>
+
+  <!-- Movie Detail Modal -->
+  <div id="movieModal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <button class="modal-close" aria-label="Close">×</button>
+      <div id="modalBody" class="modal-body">
+        <div class="loading-spinner"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    const searchBox = document.getElementById('searchBox');
+    const yearFrom = document.getElementById('yearFrom');
+    const yearTo = document.getElementById('yearTo');
+    const minRating = document.getElementById('minRating');
+    const sortBy = document.getElementById('sortBy');
+    const status = document.getElementById('status');
+    const clearBtn = document.getElementById('clearFilters');
+    const grid = document.getElementById('movieGrid');
+    
+    let debounceTimer;
+    
+    function buildQueryString() {
+      const params = new URLSearchParams();
+      if (searchBox.value.trim()) params.set('q', searchBox.value.trim());
+      if (yearFrom.value) params.set('year_from', yearFrom.value);
+      if (yearTo.value) params.set('year_to', yearTo.value);
+      if (minRating.value) params.set('min_rating', minRating.value);
+      if (sortBy.value) params.set('sort', sortBy.value);
+      if (status.value) params.set('status', status.value);
+      return params.toString();
+    }
+    
+    function updateMovies() {
+      const qs = buildQueryString();
+      grid.classList.add('loading');
+      
+      fetch('/search_ajax/?' + qs)
+        .then(r => r.text())
+        .then(html => {
+          grid.innerHTML = html;
+          grid.classList.remove('loading');
+          // Update URL without reload
+          const newUrl = qs ? '?' + qs : window.location.pathname;
+          history.replaceState(null, '', newUrl);
+        })
+        .catch(err => {
+          console.error('Search error:', err);
+          grid.classList.remove('loading');
+        });
+    }
+    
+    function debounceUpdate() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(updateMovies, 300);
+    }
+    
+    // Event listeners
+    searchBox.addEventListener('input', debounceUpdate);
+    [yearFrom, yearTo, minRating, sortBy, status].forEach(el => {
+      el.addEventListener('change', updateMovies);
+    });
+    
+    clearBtn.addEventListener('click', () => {
+      searchBox.value = '';
+      yearFrom.value = '';
+      yearTo.value = '';
+      minRating.value = '';
+      sortBy.value = 'popularity';
+      status.value = '';
+      updateMovies();
+    });
+    
+    // Modal functionality
+    const modal = document.getElementById('movieModal');
+    const modalBody = document.getElementById('modalBody');
+    const modalClose = modal.querySelector('.modal-close');
+    const modalBackdrop = modal.querySelector('.modal-backdrop');
+    
+    document.addEventListener('click', (e) => {
+      const card = e.target.closest('.card[data-movie-id]');
+      if (card && e.target.closest('.info-btn')) {
+        e.preventDefault();
+        const movieId = card.dataset.movieId;
+        showMovieDetails(movieId);
+      }
+    });
+    
+    function showMovieDetails(movieId) {
+      modal.hidden = false;
+      modalBody.innerHTML = '<div class="loading-spinner"></div>';
+      document.body.style.overflow = 'hidden';
+      
+      fetch('/movie/' + movieId + '/detail/')
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            modalBody.innerHTML = `
+              <div class="detail-content">
+                ${data.backdrop_url ? `<div class="detail-backdrop" style="background-image: url('${data.backdrop_url}')"></div>` : ''}
+                <div class="detail-info">
+                  ${data.tagline ? `<p class="tagline">"${data.tagline}"</p>` : ''}
+                  ${data.genres?.length ? `<div class="genres">${data.genres.map(g => `<span class="genre-tag">${g}</span>`).join('')}</div>` : ''}
+                  ${data.runtime ? `<p class="runtime">🕐 ${data.runtime} min</p>` : ''}
+                  ${data.overview ? `<p class="overview">${data.overview}</p>` : ''}
+                  ${data.production_companies?.length ? `<p class="production">🎬 ${data.production_companies.slice(0,3).join(', ')}</p>` : ''}
+                </div>
+              </div>
+            `;
+          } else {
+            modalBody.innerHTML = '<p class="error">Could not load movie details</p>';
+          }
+        })
+        .catch(() => {
+          modalBody.innerHTML = '<p class="error">Error loading details</p>';
+        });
+    }
+    
+    function closeModal() {
+      modal.hidden = true;
+      document.body.style.overflow = '';
+    }
+    
+    modalClose.addEventListener('click', closeModal);
+    modalBackdrop.addEventListener('click', closeModal);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.hidden) closeModal();
+    });
+  })();
+  </script>
+</body>
+</html>

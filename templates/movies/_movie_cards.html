@@ -1,0 +1,45 @@
+{% for movie in movies %}
+<article class="card" data-movie-id="{{ movie.id }}">
+  <a class="card-link" href="{{ movie.file_url }}" target="_blank" rel="noopener" title="Play {{ movie.title }}">
+    <div class="poster">
+      {% if movie.poster_url %}
+      <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" loading="lazy">
+      {% else %}
+      <div class="no-poster">
+        <span class="no-poster-icon">🎬</span>
+        <span>No Poster</span>
+      </div>
+      {% endif %}
+      <div class="poster-overlay">
+        <span class="play-icon">▶</span>
+      </div>
+    </div>
+  </a>
+  <div class="meta">
+    <h2 class="title" title="{{ movie.title }}">{{ movie.title }}</h2>
+    <div class="meta-row">
+      <span class="year">{{ movie.year|default:"—" }}</span>
+      {% if movie.vote_average %}
+      <span class="badge rating-badge">⭐ {{ movie.vote_average|floatformat:1 }}</span>
+      {% endif %}
+    </div>
+    {% if movie.popularity or movie.vote_count %}
+    <div class="stats-row">
+      {% if movie.popularity %}<span class="stat">🔥 {{ movie.popularity|floatformat:0 }}</span>{% endif %}
+      {% if movie.vote_count %}<span class="stat">👍 {{ movie.vote_count }}</span>{% endif %}
+    </div>
+    {% endif %}
+    <button class="info-btn" type="button" title="View details">ℹ️ Details</button>
+  </div>
+</article>
+{% empty %}
+<div class="no-results">
+  <div class="no-results-icon">🎭</div>
+  <h3>No movies found</h3>
+  <p>Try adjusting your search or filters</p>
+  {% if not total_count %}
+  <p class="hint">Run the crawler to import movies:<br><code>python manage.py crawl_h5ai --url "your-h5ai-url"</code>
+  </p>
+  {% endif %}
+</div>
+{% endfor %}
