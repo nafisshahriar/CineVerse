@@ -111,6 +111,7 @@ def index(request):
         'years': years,
         'filters': filters,
         'total_count': paginator.count,
+        'collection_count': Movie.objects.count(),  # Total unfiltered count
         'rating_options': [
             ('9', '9+ ⭐'),
             ('8', '8+ ⭐'),
@@ -200,7 +201,11 @@ def search_ajax(request):
         'total_count': paginator.count,
     })
     
-    return HttpResponse(html)
+    # Return JSON with HTML and count for the results counter
+    return JsonResponse({
+        'html': html,
+        'count': paginator.count,
+    })
 
 
 def movie_detail_ajax(request, movie_id):
@@ -213,8 +218,10 @@ def movie_detail_ajax(request, movie_id):
     except MovieDetail.DoesNotExist:
         detail = None
     
-    # Fetch from TMDB if needed
-    if not detail or not detail.tmdb_id:
+    # Fetch from TMDB if needed (no detail, no tmdb_id, or missing cast/director)
+    needs_fetch = not detail or not detail.tmdb_id or (not detail.cast and not detail.director)
+    
+    if needs_fetch:
         extended = tmdb_service.get_extended_details(movie.title, movie.year_str or '')
         
         if extended:
@@ -232,6 +239,8 @@ def movie_detail_ajax(request, movie_id):
             detail.budget = extended.get('budget')
             detail.revenue = extended.get('revenue')
             detail.production_companies = extended.get('production_companies', [])
+            detail.cast = extended.get('cast', [])
+            detail.director = extended.get('director', {})
             
             if extended.get('release_date'):
                 try:
@@ -256,6 +265,13 @@ def movie_detail_ajax(request, movie_id):
             'tagline': detail.tagline,
             'imdb_id': detail.imdb_id,
             'production_companies': detail.production_companies,
+            'cast': detail.cast,
+            'director': detail.director,
+            # Movie stats from parent Movie model
+            'year': movie.year,
+            'vote_average': movie.vote_average,
+            'vote_count': movie.vote_count,
+            'popularity': movie.popularity,
         })
     
     return JsonResponse({
