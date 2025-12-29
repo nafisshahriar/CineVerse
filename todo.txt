@@ -1,0 +1,8 @@
+1) updating metadata
+2) adding section for English, hindi and foreign language
+3) 
+
+# Usage
+python manage.py crawl_h5ai --url "https://your-h5ai/files/"
+python manage.py crawl_h5ai --url "https://your-h5ai/files/" --force  # Force re-fetch
+python manage.py crawl_h5ai --url "https://your-h5ai/files/" --retry-failed

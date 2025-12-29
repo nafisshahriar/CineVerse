@@ -16,7 +16,7 @@
     <header class="site-header">
         <div class="header-content">
             <h1 class="logo">🎬 CineVerse</h1>
-            <p class="subtitle">{{ total_count }} movies in your collection</p>
+            <p class="subtitle">{{ collection_count }} movies in your collection</p>
         </div>
     </header>
 
@@ -92,6 +92,10 @@
 
                 <button id="clearFilters" class="btn-clear" type="button">Clear All</button>
             </div>
+        </div>
+
+        <div class="results-info" id="resultsInfo">
+            <span id="resultsCount">Showing {{ total_count }} movie{{ total_count|pluralize }}</span>
         </div>
 
         <div id="movieGrid" class="grid">
@@ -175,13 +179,18 @@
             function updateMovies() {
                 const qs = buildQueryString();
                 if (grid) grid.classList.add('loading');
+                const resultsCount = document.getElementById('resultsCount');
 
                 fetch('/search_ajax/?' + qs)
-                    .then(r => r.text())
-                    .then(html => {
+                    .then(r => r.json())
+                    .then(data => {
                         if (grid) {
-                            grid.innerHTML = html;
+                            grid.innerHTML = data.html;
                             grid.classList.remove('loading');
+                        }
+                        if (resultsCount) {
+                            const count = data.count;
+                            resultsCount.textContent = 'Showing ' + count + ' movie' + (count !== 1 ? 's' : '');
                         }
                         const newUrl = qs ? '?' + qs : window.location.pathname;
                         history.replaceState(null, '', newUrl);
@@ -271,10 +280,55 @@
                                 if (data.backdrop_url) html += '<div class="detail-backdrop" style="background-image: url(\'' + data.backdrop_url + '\')"></div>';
                                 html += '<div class="detail-info">';
                                 if (data.tagline) html += '<p class="tagline">"' + data.tagline + '"</p>';
+
+                                // Movie stats bar
+                                html += '<div class="movie-stats">';
+                                if (data.year) html += '<span class="stat-item">📅 ' + data.year + '</span>';
+                                if (data.vote_average) html += '<span class="stat-item">⭐ ' + data.vote_average.toFixed(1) + '</span>';
+                                if (data.vote_count) html += '<span class="stat-item">👍 ' + data.vote_count.toLocaleString() + ' votes</span>';
+                                if (data.popularity) html += '<span class="stat-item">🔥 ' + Math.round(data.popularity) + '</span>';
+                                html += '</div>';
+
                                 if (data.genres && data.genres.length) html += '<div class="genres">' + data.genres.map(function (g) { return '<span class="genre-tag">' + g + '</span>'; }).join('') + '</div>';
                                 if (data.runtime) html += '<p class="runtime">🕐 ' + data.runtime + ' min</p>';
                                 if (data.overview) html += '<p class="overview">' + data.overview + '</p>';
-                                if (data.production_companies && data.production_companies.length) html += '<p class="production">🎬 ' + data.production_companies.slice(0, 3).join(', ') + '</p>';
+
+                                // Director section
+                                if (data.director && data.director.name) {
+                                    html += '<div class="credits-section">';
+                                    html += '<h4 class="credits-title">🎬 Director</h4>';
+                                    html += '<div class="director-card">';
+                                    if (data.director.profile_path) {
+                                        html += '<img src="' + data.director.profile_path + '" alt="' + data.director.name + '" class="person-photo">';
+                                    } else {
+                                        html += '<div class="person-photo no-photo">👤</div>';
+                                    }
+                                    html += '<span class="person-name">' + data.director.name + '</span>';
+                                    html += '</div></div>';
+                                }
+
+                                // Cast section
+                                if (data.cast && data.cast.length) {
+                                    html += '<div class="credits-section">';
+                                    html += '<h4 class="credits-title">🎭 Cast</h4>';
+                                    html += '<div class="cast-scroll">';
+                                    data.cast.forEach(function (actor) {
+                                        html += '<div class="cast-card">';
+                                        if (actor.profile_path) {
+                                            html += '<img src="' + actor.profile_path + '" alt="' + actor.name + '" class="person-photo">';
+                                        } else {
+                                            html += '<div class="person-photo no-photo">👤</div>';
+                                        }
+                                        html += '<span class="person-name">' + actor.name + '</span>';
+                                        if (actor.character) {
+                                            html += '<span class="person-role">' + actor.character + '</span>';
+                                        }
+                                        html += '</div>';
+                                    });
+                                    html += '</div></div>';
+                                }
+
+                                if (data.production_companies && data.production_companies.length) html += '<p class="production">🏢 ' + data.production_companies.slice(0, 3).join(', ') + '</p>';
                                 html += '</div></div>';
                                 modalBody.innerHTML = html;
                             } else if (modalBody) {

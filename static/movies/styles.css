@@ -248,6 +248,17 @@ body {
 }
 
 /* ============================================================
+   Results Info
+   ============================================================ */
+.results-info {
+  margin-bottom: 16px;
+  padding: 0 4px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+/* ============================================================
    Movie Grid
    ============================================================ */
 .grid {
@@ -626,6 +637,24 @@ body {
   color: white;
 }
 
+.movie-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.stat-item {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
 .runtime {
   font-size: 0.9rem;
   color: var(--text-secondary);
@@ -825,4 +854,144 @@ body {
 
 .genre-menu::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
+}
+
+/* ============================================================
+   Credits Section (Director & Cast)
+   ============================================================ */
+.credits-section {
+  margin-top: 20px;
+  margin-bottom: 16px;
+}
+
+.credits-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.director-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: var(--transition-fast);
+}
+
+.director-card:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--accent);
+}
+
+.cast-scroll {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding: 8px 4px 12px 4px;
+  margin: -8px -4px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cast-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.cast-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cast-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 3px;
+}
+
+.cast-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+.cast-card {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100px;
+  padding: 12px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  text-align: center;
+  scroll-snap-align: start;
+  transition: var(--transition-fast);
+}
+
+.cast-card:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--accent);
+  transform: scale(1.05);
+  box-shadow: var(--shadow-md);
+}
+
+.person-photo {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--border-light);
+  background: var(--bg-elevated);
+}
+
+.person-photo.no-photo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  color: var(--text-muted);
+}
+
+.person-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.director-card .person-name {
+  font-size: 1rem;
+}
+
+.person-role {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+  word-break: break-word;
+}
+
+/* Responsive adjustments for credits */
+@media (max-width: 600px) {
+  .cast-card {
+    width: 85px;
+    padding: 10px;
+  }
+
+  .person-photo {
+    width: 52px;
+    height: 52px;
+  }
+
+  .person-name {
+    font-size: 0.8rem;
+  }
+
+  .person-role {
+    font-size: 0.7rem;
+  }
 }

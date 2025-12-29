@@ -103,7 +103,45 @@ class TMDBService:
             'popularity': details.get('popularity'),
             'vote_count': details.get('vote_count'),
             'vote_average': details.get('vote_average'),
+            **self._extract_credits(tmdb_id),
         }
+    
+    def _extract_credits(self, tmdb_id: int) -> Dict:
+        """Extract top cast and director from movie credits"""
+        credits = self.get_movie_credits(tmdb_id)
+        result = {'cast': [], 'director': {}}
+        
+        if not credits:
+            return result
+        
+        # Get top 4 cast members
+        cast_list = credits.get('cast', [])[:4]
+        result['cast'] = [
+            {
+                'name': c.get('name', ''),
+                'character': c.get('character', ''),
+                'profile_path': self.profile_url(c.get('profile_path')),
+            }
+            for c in cast_list
+        ]
+        
+        # Find director in crew
+        for crew in credits.get('crew', []):
+            if crew.get('job') == 'Director':
+                result['director'] = {
+                    'name': crew.get('name', ''),
+                    'profile_path': self.profile_url(crew.get('profile_path')),
+                }
+                break
+        
+        return result
+    
+    @staticmethod
+    def profile_url(path: str, size: str = 'w185') -> Optional[str]:
+        """Build full profile image URL from path"""
+        if path:
+            return f"{TMDB_IMAGE_BASE}{size}{path}"
+        return None
     
     def get_movie_credits(self, tmdb_id: int) -> Optional[Dict]:
         """Get cast and crew for a movie - EXTENSION POINT"""

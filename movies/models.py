@@ -82,6 +82,8 @@ class MovieDetail(models.Model):
     budget = models.BigIntegerField(null=True, blank=True)
     revenue = models.BigIntegerField(null=True, blank=True)
     production_companies = models.JSONField(default=list)
+    cast = models.JSONField(default=list)  # [{name, character, profile_path}, ...]
+    director = models.JSONField(default=dict)  # {name, profile_path}
     fetched_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
