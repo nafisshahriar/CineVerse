@@ -1,0 +1,15 @@
+[Unit]
+Description=CineVerse Django Web Server setup
+After=network.target
+
+[Service]
+# Replace 'pi' with your actual username on the Pi if different
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/movie_verse2/CineVerse
+ExecStart=/bin/bash /home/pi/movie_verse2/CineVerse/pi_deployment/cineverse_startup.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
