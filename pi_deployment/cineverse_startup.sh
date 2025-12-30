@@ -30,6 +30,6 @@ python manage.py migrate
 python manage.py collectstatic --noinput
 
 # 8. Start Gunicorn
-# Adjust port if necessary
+# Using full path to gunicorn from virtual environment
 echo "Starting Server..."
-exec gunicorn moviedash.wsgi:application --bind 0.0.0.0:8000
+exec "$PROJECT_DIR/.CinePi/bin/gunicorn" moviedash.wsgi:application --bind 0.0.0.0:8000
