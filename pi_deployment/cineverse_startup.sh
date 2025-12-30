@@ -21,15 +21,15 @@ git pull origin main
 source .CinePi/bin/activate
 
 # 5. Install any new dependencies
-pip install -r requirements.txt
+#pip install -r requirements.txt
 
 # 6. Apply database migrations
-python manage.py migrate
+#python manage.py migrate
 
 # 7. Collect static files
-python manage.py collectstatic --noinput
+#python manage.py collectstatic --noinput
 
 # 8. Start Gunicorn
 # Using full path to gunicorn from virtual environment
 echo "Starting Server..."
-exec "$PROJECT_DIR/.CinePi/bin/gunicorn" moviedash.wsgi:application --bind 0.0.0.0:8000
+exec python manage.py runserver 0.0.0.0:8000
