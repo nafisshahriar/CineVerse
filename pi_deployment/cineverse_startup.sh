@@ -18,7 +18,7 @@ git reset --hard HEAD # CAUTION: Discards local changes to ensure clean pull
 git pull origin main
 
 # 4. Activate Virtual Environment
-source .venv/bin/activate
+source .CinePi/bin/activate
 
 # 5. Install any new dependencies
 pip install -r requirements.txt
