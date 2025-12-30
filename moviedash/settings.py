@@ -6,8 +6,8 @@ print(">>> PROJECT ROOT:", os.path.dirname(os.path.abspath(__file__)))
 load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'dev-secret-key')
-DEBUG = os.getenv('DJANGO_DEBUG', 'True') == 'False'
-ALLOWED_HOSTS = ['*'] if DEBUG else os.getenv('DJANGO_ALLOWED_HOSTS','').split(',')
+DEBUG = os.getenv('DJANGO_DEBUG', 'True') == 'True'
+ALLOWED_HOSTS = ['*']  # Allow all hosts for personal/home server use
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
