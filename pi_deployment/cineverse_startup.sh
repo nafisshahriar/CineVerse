@@ -1,7 +1,7 @@
 #!/bin/bash
 # cineverse_startup.sh
 # Adjust the path below to where your project is on the Pi
-PROJECT_DIR="/home/pi/movie_verse2/CineVerse"
+PROJECT_DIR="/home/nafis/CineVerse"
 
 # 1. Navigate to project
 cd "$PROJECT_DIR" || exit
