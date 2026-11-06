@@ -99,6 +99,10 @@ STORAGES = {
     },
 }
 
+# Whitenoise fail-safe: automatically find uncollected static files in STATICFILES_DIRS
+WHITENOISE_USE_FINDERS = True
+WHITENOISE_AUTOREFRESH = True
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Management & Maintenance Dashboard Access Control
