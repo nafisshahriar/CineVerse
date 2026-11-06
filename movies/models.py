@@ -4,14 +4,24 @@ from django.utils import timezone
 
 class Movie(models.Model):
     title = models.CharField(max_length=512, db_index=True)
+    clean_title = models.CharField(max_length=512, blank=True, default='', db_index=True)
     year = models.IntegerField(null=True, blank=True, db_index=True)
     year_str = models.CharField(max_length=10, blank=True, null=True)  # Original string
     poster_url = models.URLField(blank=True, null=True)
     file_url = models.URLField(unique=True)  # Unique constraint on file_url alone
     directory_url = models.URLField(blank=True, null=True)  # Parent directory
+    source = models.CharField(max_length=64, blank=True, default='', db_index=True)  # e.g. "Dhaka-Flix 14", "E-Box"
+    resolution = models.CharField(max_length=20, blank=True, default='', db_index=True)  # e.g. "4K", "1080p", "720p"
+    quality = models.CharField(max_length=32, blank=True, default='')  # e.g. "BluRay", "WEB-DL"
+    language = models.CharField(max_length=40, blank=True, default='', db_index=True)  # e.g. "English", "Korean"
+    genres = models.CharField(max_length=255, blank=True, default='', db_index=True)  # e.g. "Action, Drama, Thriller"
+    group_key = models.CharField(max_length=512, blank=True, default='', db_index=True)  # key to group duplicate copies
+    is_primary_copy = models.BooleanField(default=True, db_index=True)  # True for the best/representative copy of a movie
     popularity = models.FloatField(null=True, blank=True, db_index=True)
     vote_count = models.IntegerField(null=True, blank=True)
     vote_average = models.FloatField(null=True, blank=True, db_index=True)
+    imdb_id = models.CharField(max_length=20, blank=True, default='', db_index=True)
+    imdb_rating = models.FloatField(null=True, blank=True, db_index=True)
     fetched = models.BooleanField(default=False)
     metadata_status = models.CharField(max_length=32, default='missing', db_index=True)
     last_crawled = models.DateTimeField(null=True, blank=True)
@@ -21,9 +31,31 @@ class Movie(models.Model):
 
     class Meta:
         ordering = ['title']
+        indexes = [
+            models.Index(fields=['group_key']),
+            models.Index(fields=['clean_title', 'year']),
+            models.Index(fields=['source', 'resolution']),
+        ]
 
     def __str__(self):
-        return f"{self.title} ({self.year})" if self.year else self.title
+        t = self.clean_title or self.title
+        return f"{t} ({self.year})" if self.year else t
+
+    @property
+    def display_title(self):
+        return self.clean_title or self.title
+
+    @property
+    def primary_genre(self):
+        if self.genres:
+            return self.genres.split(',')[0].strip()
+        return ''
+
+    @property
+    def genre_list(self):
+        if self.genres:
+            return [g.strip() for g in self.genres.split(',') if g.strip()]
+        return []
 
 
 class CrawledDirectory(models.Model):
@@ -78,6 +110,7 @@ class MovieDetail(models.Model):
     backdrop_url = models.URLField(blank=True, null=True)
     tagline = models.CharField(max_length=512, blank=True)
     imdb_id = models.CharField(max_length=20, blank=True)
+    imdb_rating = models.FloatField(null=True, blank=True)
     original_language = models.CharField(max_length=10, blank=True)
     budget = models.BigIntegerField(null=True, blank=True)
     revenue = models.BigIntegerField(null=True, blank=True)

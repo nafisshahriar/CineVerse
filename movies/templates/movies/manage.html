@@ -1,0 +1,1944 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CineVerse Studio - Management & Maintenance Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/movies/styles.css">
+  <style>
+    /* Management Studio Dedicated Styles */
+    .manage-page {
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    .studio-header {
+      background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 20px 32px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+    }
+
+    .studio-header-inner {
+      max-width: 1440px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .studio-brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .studio-logo {
+      font-size: 1.5rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #ffffff 40%, var(--accent) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.3px;
+    }
+
+    .studio-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 3px 8px;
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #60a5fa;
+      border-radius: var(--radius-xs);
+    }
+
+    .studio-nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .task-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-xl);
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      transition: all var(--transition-fast);
+    }
+
+    .task-status-pill.running {
+      border-color: rgba(59, 130, 246, 0.4);
+      background: rgba(59, 130, 246, 0.1);
+      color: #93c5fd;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .task-status-pill.running .status-dot {
+      background: #3b82f6;
+      box-shadow: 0 0 10px #3b82f6;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.2); }
+    }
+
+    .btn-return-cinema {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: all var(--transition-fast);
+    }
+
+    .btn-return-cinema:hover {
+      background: var(--bg-elevated);
+      border-color: rgba(255, 255, 255, 0.3);
+      color: #fff;
+    }
+
+    /* Tabs */
+    .studio-tabs {
+      max-width: 1440px;
+      margin: 24px auto 0;
+      padding: 0 24px;
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--border-subtle);
+      overflow-x: auto;
+    }
+
+    .tab-btn {
+      padding: 12px 20px;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-secondary);
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all var(--transition-fast);
+      white-space: nowrap;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .tab-btn.active {
+      color: #ffffff;
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-btn .tab-count {
+      padding: 2px 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius-xs);
+      font-size: 0.75rem;
+    }
+
+    /* Content Area */
+    .studio-main {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 28px 24px 64px;
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+      animation: fadeIn 0.2s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Metric Cards Grid */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .metric-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .metric-value {
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    .metric-sub {
+      margin-top: 6px;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .progress-bar-container {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 3px;
+      margin-top: 10px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    .progress-bar-fill.success {
+      background: linear-gradient(90deg, #10b981, #34d399);
+    }
+
+    .btn-card-action {
+      margin-top: 12px;
+      width: 100%;
+      padding: 7px 12px;
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      border-radius: var(--radius-sm);
+      color: #93c5fd;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-card-action:hover {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #ffffff;
+      box-shadow: 0 2px 10px rgba(59, 130, 246, 0.4);
+    }
+
+    .btn-find-poster {
+      border: 1px dashed rgba(59, 130, 246, 0.5) !important;
+      background: rgba(59, 130, 246, 0.08) !important;
+      color: #93c5fd !important;
+      cursor: pointer;
+      font-size: 0.68rem;
+      font-weight: 700;
+      transition: all var(--transition-fast);
+    }
+
+    .btn-find-poster:hover {
+      background: var(--accent) !important;
+      color: #ffffff !important;
+      border-style: solid !important;
+    }
+
+    .quick-hub-banner {
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.12) 0%, rgba(17, 18, 23, 0.9) 100%);
+      border: 1px solid rgba(59, 130, 246, 0.28);
+      border-radius: var(--radius-md);
+      padding: 16px 22px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .quick-hub-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .quick-hub-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .quick-hub-desc {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+
+    .quick-hub-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn-hub-action {
+      padding: 7px 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-hub-action:hover {
+      background: var(--bg-elevated);
+      border-color: rgba(255, 255, 255, 0.3);
+      color: #ffffff;
+    }
+
+    .btn-hub-action.primary {
+      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      color: #ffffff;
+      border: none;
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+    }
+
+    .btn-hub-action.primary:hover {
+      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.5);
+    }
+
+    .featured-op-card {
+      border-color: rgba(59, 130, 246, 0.35);
+      background: linear-gradient(180deg, rgba(59, 130, 246, 0.05) 0%, var(--bg-card) 40%);
+    }
+
+    /* Two Columns Section */
+    .two-col-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 28px;
+    }
+
+    @media (max-width: 900px) {
+      .two-col-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 22px;
+    }
+
+    .panel-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .panel-card-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Tables */
+    .studio-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+
+    .studio-table th {
+      text-align: left;
+      padding: 10px 12px;
+      color: var(--text-muted);
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .studio-table td {
+      padding: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+    }
+
+    .studio-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Operations Grid */
+    .operations-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 20px;
+    }
+
+    .op-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      transition: border-color var(--transition-fast);
+    }
+
+    .op-card:hover {
+      border-color: rgba(59, 130, 246, 0.4);
+    }
+
+    .op-card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .op-icon {
+      font-size: 1.6rem;
+      background: var(--bg-elevated);
+      padding: 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-light);
+      flex-shrink: 0;
+    }
+
+    .op-title-area h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+      color: var(--text-primary);
+    }
+
+    .op-title-area p {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+    .op-form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: auto;
+    }
+
+    .form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .form-row label {
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+
+    .form-input, .form-select {
+      height: 38px;
+      padding: 0 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 0.88rem;
+      font-family: inherit;
+    }
+
+    .form-input:focus, .form-select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+
+    .preset-chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    .preset-chip {
+      padding: 3px 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius-xs);
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .preset-chip:hover {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: var(--accent);
+      color: #93c5fd;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+      accent-color: var(--accent);
+      width: 15px;
+      height: 15px;
+    }
+
+    .btn-op-submit {
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+      color: #ffffff;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: 0.88rem;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+    }
+
+    .btn-op-submit:hover {
+      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45);
+    }
+
+    .btn-op-submit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    /* Live Task Console */
+    .console-container {
+      background: #08090b;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+    }
+
+    .console-header {
+      background: #111217;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .console-task-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .console-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .console-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn-stop-task {
+      padding: 6px 14px;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #fca5a5;
+      border-radius: var(--radius-sm);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .btn-stop-task:hover {
+      background: rgba(239, 68, 68, 0.3);
+      color: #ffffff;
+    }
+
+    .console-progress-area {
+      padding: 16px 20px;
+      background: #0d0e12;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .progress-stats-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    .progress-stats-row strong {
+      color: var(--text-primary);
+    }
+
+    .console-log-window {
+      height: 440px;
+      overflow-y: auto;
+      padding: 18px 20px;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', monospace;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      color: #cbd5e1;
+      background: #08090b;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-light) transparent;
+    }
+
+    .log-line {
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .log-success { color: #34d399; }
+    .log-error { color: #f87171; }
+    .log-heading { color: #60a5fa; font-weight: 600; }
+    .log-progress { color: #fbbf24; }
+
+    /* Catalog Inspector */
+    .inspector-controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .issue-filter-chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .issue-chip {
+      padding: 6px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .issue-chip:hover {
+      border-color: rgba(255, 255, 255, 0.3);
+      color: var(--text-primary);
+    }
+
+    .issue-chip.active {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: var(--accent);
+      color: #60a5fa;
+    }
+
+    .inspector-search-box {
+      width: 260px;
+      height: 38px;
+      padding: 0 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 0.88rem;
+    }
+
+    .inspector-search-box:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .thumb-poster {
+      width: 36px;
+      height: 52px;
+      border-radius: 3px;
+      object-fit: cover;
+      background: var(--bg-elevated);
+      display: block;
+    }
+
+    .thumb-no-poster {
+      width: 36px;
+      height: 52px;
+      border-radius: 3px;
+      background: var(--bg-elevated);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    .btn-action-sm {
+      padding: 4px 10px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-xs);
+      color: var(--text-primary);
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      margin-right: 4px;
+    }
+
+    .btn-action-sm:hover {
+      background: rgba(59, 130, 246, 0.15);
+      border-color: var(--accent);
+      color: #93c5fd;
+    }
+
+    .btn-action-sm.danger:hover {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: #ef4444;
+      color: #fca5a5;
+    }
+
+    .status-badge-sm {
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .status-badge-sm.ok { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .status-badge-sm.missing { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+    .status-badge-sm.failed { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+
+    /* Modal for Quick Edit */
+    .edit-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .edit-modal[hidden] {
+      display: none !important;
+      pointer-events: none !important;
+    }
+
+    .edit-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(10px);
+    }
+
+    .edit-modal-content {
+      position: relative;
+      width: 100%;
+      max-width: 520px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: 24px;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body class="manage-page">
+  <!-- Studio Header -->
+  <header class="studio-header">
+    <div class="studio-header-inner">
+      <div class="studio-brand">
+        <a href="/" style="text-decoration: none;">
+          <h1 class="studio-logo">🎬 CineVerse</h1>
+        </a>
+        <span class="studio-badge">Management & Maintenance Studio</span>
+      </div>
+
+      <div class="studio-nav-actions">
+        <div id="taskStatusPill" class="task-status-pill">
+          <span class="status-dot"></span>
+          <span id="taskStatusText">System Idle</span>
+        </div>
+        <button id="btnRefreshStats" class="btn-return-cinema" type="button" title="Refresh Live Database Stats">
+          🔄 Refresh
+        </button>
+        <a href="/" class="btn-return-cinema" title="Back to Cinema Catalog">
+          🎬 Cinema View
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="studio-tabs" aria-label="Management Navigation">
+    <button class="tab-btn active" data-tab="health">
+      📊 Health & Overview
+    </button>
+    <button class="tab-btn" data-tab="operations">
+      🛠️ Maintenance Operations
+    </button>
+    <button class="tab-btn" data-tab="console">
+      📺 Live Task Console <span id="consoleTaskBadge" class="tab-count" style="display:none;">Running</span>
+    </button>
+    <button class="tab-btn" data-tab="inspector">
+      🔍 Catalog Inspector & Fixes
+    </button>
+  </nav>
+
+  <main class="studio-main">
+    <!-- ============================================================
+         Tab 1: System Health & Overview
+         ============================================================ -->
+    <div id="tab-health" class="tab-panel active">
+      <!-- 1-Click Quick Hub Banner -->
+      <div class="quick-hub-banner">
+        <div class="quick-hub-text">
+          <div class="quick-hub-title">
+            <span>⚡ 1-Click Catalog Maintenance</span>
+            <span class="studio-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399;">Recommended</span>
+          </div>
+          <div class="quick-hub-desc">
+            Instantly resolve artwork, metadata, and ratings across your catalog without manual configuration.
+          </div>
+        </div>
+        <div class="quick-hub-actions">
+          <button class="btn-hub-action primary" type="button" onclick="quickFetchMissingPosters()" title="Fetch missing posters and overviews from TMDB">
+            🖼️ Fix Missing Posters ({{ missing_posters }})
+          </button>
+          <button class="btn-hub-action" type="button" onclick="quickFetchMissingGenres()" title="Fetch genres from TMDB and Cinemeta">
+            🏷️ Fetch Genres
+          </button>
+          <button class="btn-hub-action" type="button" onclick="quickFetchMissingImdb()" title="Query authentic IMDb ratings">
+            ⭐ Sync IMDb Ratings
+          </button>
+          <button class="btn-hub-action" type="button" onclick="startRegroupTask()" title="Recalculate duplicate copy groups and primary copy flags">
+            📀 Rebuild Copy Groups
+          </button>
+        </div>
+      </div>
+
+      <!-- KPI Metrics Grid -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-title">Total Server Copies <span>📁</span></div>
+          <div id="statTotalFiles" class="metric-value">{{ total_files|default:"0" }}</div>
+          <div class="metric-sub">
+            <span>Indexed file records</span>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-title">Unique Movie Titles <span>🎬</span></div>
+          <div id="statUniqueMovies" class="metric-value">{{ unique_movies|default:"0" }}</div>
+          <div class="metric-sub">
+            <span>Primary deduplicated titles</span>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-title">Poster Coverage <span>🖼️</span></div>
+          <div id="statPosterPct" class="metric-value">{{ poster_pct }}%</div>
+          <div class="metric-sub">
+            <span id="statPosterCounts">{{ with_posters }} found &bull; {{ missing_posters }} missing</span>
+          </div>
+          <div class="progress-bar-container">
+            <div id="barPoster" class="progress-bar-fill {% if poster_pct > 90 %}success{% endif %}" style="width: {{ poster_pct }}%;"></div>
+          </div>
+          <button class="btn-card-action" type="button" onclick="quickFetchMissingPosters()" title="Instantly search TMDB for all missing movie posters">
+            ⚡ Fetch {{ missing_posters }} Missing Posters
+          </button>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-title">Authentic IMDb Ratings <span>⭐</span></div>
+          <div id="statImdbPct" class="metric-value">{{ imdb_pct }}%</div>
+          <div class="metric-sub">
+            <span id="statImdbCounts">{{ with_imdb }} rated &bull; {{ missing_imdb }} pending</span>
+          </div>
+          <div class="progress-bar-container">
+            <div id="barImdb" class="progress-bar-fill {% if imdb_pct > 90 %}success{% endif %}" style="width: {{ imdb_pct }}%;"></div>
+          </div>
+          <button class="btn-card-action" type="button" onclick="quickFetchMissingImdb()" title="Query authentic IMDb ratings">
+            ⚡ Sync Missing IMDb
+          </button>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-title">Genres Populated <span>🏷️</span></div>
+          <div id="statGenresPct" class="metric-value">{{ genres_pct }}%</div>
+          <div class="metric-sub">
+            <span id="statGenresCounts">{{ with_genres }} tagged &bull; {{ missing_genres }} pending</span>
+          </div>
+          <div class="progress-bar-container">
+            <div id="barGenres" class="progress-bar-fill {% if genres_pct > 90 %}success{% endif %}" style="width: {{ genres_pct }}%;"></div>
+          </div>
+          <button class="btn-card-action" type="button" onclick="quickFetchMissingGenres()" title="Resolve genres from TMDB & Cinemeta">
+            ⚡ Fetch Missing Genres
+          </button>
+        </div>
+      </div>
+
+      <!-- Two Column Details -->
+      <div class="two-col-grid">
+        <!-- Sources Distribution -->
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <h2 class="panel-card-title">📡 Server Sources Distribution</h2>
+            <span class="studio-badge">{{ sources_breakdown|length }} Servers</span>
+          </div>
+          <table class="studio-table">
+            <thead>
+              <tr>
+                <th>Source Server</th>
+                <th>File Count</th>
+                <th>Coverage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in sources_breakdown %}
+              <tr>
+                <td><strong>{{ s.source|default:"Local / Unknown" }}</strong></td>
+                <td>{{ s.count }} files</td>
+                <td>
+                  <div class="progress-bar-container" style="margin: 0; width: 120px;">
+                    <div class="progress-bar-fill" style="width: {% widthratio s.count total_files 100 %}%;"></div>
+                  </div>
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="3" style="text-align:center; color:var(--text-muted);">No server copies recorded yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Resolutions Breakdown -->
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <h2 class="panel-card-title">📺 Quality & Resolution Breakdown</h2>
+            <span class="studio-badge">{{ resolutions_breakdown|length }} Tiers</span>
+          </div>
+          <table class="studio-table">
+            <thead>
+              <tr>
+                <th>Resolution Tier</th>
+                <th>Movie Count</th>
+                <th>Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in resolutions_breakdown %}
+              <tr>
+                <td><strong>{{ r.resolution|default:"Standard" }}</strong></td>
+                <td>{{ r.count }} copies</td>
+                <td>
+                  <div class="progress-bar-container" style="margin: 0; width: 120px;">
+                    <div class="progress-bar-fill success" style="width: {% widthratio r.count total_files 100 %}%;"></div>
+                  </div>
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="3" style="text-align:center; color:var(--text-muted);">No resolution records yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Recent Crawls Table -->
+      <div class="panel-card">
+        <div class="panel-card-header">
+          <h2 class="panel-card-title">🕒 Recent Crawled Directories</h2>
+          <span class="studio-badge">Last {{ recent_crawls|length }} Runs</span>
+        </div>
+        <table class="studio-table">
+          <thead>
+            <tr>
+              <th>Directory URL</th>
+              <th>Last Crawled</th>
+              <th>Movies Discovered</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in recent_crawls %}
+            <tr>
+              <td style="font-family: monospace; font-size: 0.8rem; word-break: break-all;">{{ c.url }}</td>
+              <td>{{ c.last_crawled|date:"Y-m-d H:i" }}</td>
+              <td><span class="studio-badge">{{ c.movie_count }} movies</span></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="3" style="text-align:center; color:var(--text-muted);">No directories crawled yet. Launch a crawl from the Maintenance Operations tab.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         Tab 2: Maintenance Operations (Tool Cards)
+         ============================================================ -->
+    <div id="tab-operations" class="tab-panel">
+      <div class="operations-grid">
+        <!-- Operation: Fetch Missing Posters & TMDB Metadata (Featured) -->
+        <div class="op-card featured-op-card">
+          <div class="op-card-header">
+            <div class="op-icon" style="background: rgba(59, 130, 246, 0.15); border-color: rgba(59, 130, 246, 0.35);">🖼️</div>
+            <div class="op-title-area">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <h3>Fetch Missing Posters &amp; Metadata</h3>
+                <span class="studio-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.3);">Essential</span>
+              </div>
+              <p>Scans movies currently missing artwork and searches TMDB using multi-pass title matching and release year tolerance to attach high-res posters, overviews, ratings, and backdrops.</p>
+            </div>
+          </div>
+          <form id="formPosters" class="op-form" onsubmit="return false;">
+            <div class="form-row">
+              <label for="postersLimit">Batch Limit</label>
+              <select id="postersLimit" class="form-select">
+                <option value="0" selected>All Missing Movies ({{ missing_posters }} movies)</option>
+                <option value="100">100 movies</option>
+                <option value="300">300 movies</option>
+                <option value="500">500 movies</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="postersWorkers">Worker Threads</label>
+              <select id="postersWorkers" class="form-select">
+                <option value="8">8 concurrent threads</option>
+                <option value="12" selected>12 concurrent threads (Fast &amp; Safe)</option>
+                <option value="16">16 concurrent threads (High Speed)</option>
+              </select>
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="postersIncludeDetails" checked>
+              <span>Also fetch extended details (director, cast, runtime, backdrop)</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="postersForce">
+              <span>Force re-fetch even for movies that already have posters</span>
+            </label>
+            <button class="btn-op-submit" type="button" onclick="startPostersTask()">
+              ▶ Start Fetching Missing Posters &amp; Metadata
+            </button>
+          </form>
+        </div>
+
+        <!-- Operation 1: Crawl H5AI -->
+        <div class="op-card">
+          <div class="op-card-header">
+            <div class="op-icon">🕷️</div>
+            <div class="op-title-area">
+              <h3>Crawl & Import from H5AI</h3>
+              <p>Scan network H5AI directory servers, parse titles/years/qualities, and import new movie records.</p>
+            </div>
+          </div>
+          <form id="formCrawl" class="op-form" onsubmit="return false;">
+            <div class="form-row">
+              <label for="crawlUrl">Root H5AI URL</label>
+              <input id="crawlUrl" class="form-input" type="url" placeholder="http://172.x.x.x/movies/" required>
+              <div class="preset-chips">
+                <span class="preset-chip" onclick="setPresetUrl('http://172.16.50.14/FTP-14/Movies/')">Dhaka-Flix 14</span>
+                <span class="preset-chip" onclick="setPresetUrl('http://172.16.50.7/FTP-7/Movies/')">Dhaka-Flix 7</span>
+                <span class="preset-chip" onclick="setPresetUrl('http://10.16.100.244/')">E-Box</span>
+              </div>
+            </div>
+            <div class="form-row">
+              <label for="crawlLimit">Scan Limit (optional)</label>
+              <input id="crawlLimit" class="form-input" type="number" placeholder="Leave empty for all">
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="crawlForce">
+              <span>Force re-crawl unchanged directories</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="crawlRetryFailed">
+              <span>Retry previously failed parses</span>
+            </label>
+            <button class="btn-op-submit" type="button" onclick="startCrawlTask()">
+              ▶ Launch Crawler & Import
+            </button>
+          </form>
+        </div>
+
+        <!-- Operation 2: Multi-Threaded Genre Fetcher -->
+        <div class="op-card">
+          <div class="op-card-header">
+            <div class="op-icon">🏷️</div>
+            <div class="op-title-area">
+              <h3>Fetch Movie Genres</h3>
+              <p>Resolve TMDB genre IDs and Cinemeta genres concurrently. Synchronizes all server copies sharing the same group key.</p>
+            </div>
+          </div>
+          <form id="formGenres" class="op-form" onsubmit="return false;">
+            <div class="form-row">
+              <label for="genresLimit">Batch Size / Limit</label>
+              <select id="genresLimit" class="form-select">
+                <option value="500">500 movies</option>
+                <option value="1000" selected>1,000 movies</option>
+                <option value="2500">2,500 movies</option>
+                <option value="0">All remaining movies</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="genresWorkers">Worker Threads</label>
+              <select id="genresWorkers" class="form-select">
+                <option value="8">8 concurrent threads</option>
+                <option value="16" selected>16 concurrent threads (Fast)</option>
+                <option value="24">24 concurrent threads (Ultra)</option>
+              </select>
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="genresForce">
+              <span>Re-fetch even if genres already exist</span>
+            </label>
+            <button class="btn-op-submit" type="button" onclick="startGenresTask()">
+              ▶ Run Genre Resolver
+            </button>
+          </form>
+        </div>
+
+        <!-- Operation 3: Authentic IMDb Ratings Sync -->
+        <div class="op-card">
+          <div class="op-card-header">
+            <div class="op-icon">⭐</div>
+            <div class="op-title-area">
+              <h3>Sync Authentic IMDb Ratings</h3>
+              <p>Query official Cinemeta and IMDb datasets concurrently. Updates all server duplicates in atomic batch transactions.</p>
+            </div>
+          </div>
+          <form id="formImdb" class="op-form" onsubmit="return false;">
+            <div class="form-row">
+              <label for="imdbLimit">Batch Size / Limit</label>
+              <select id="imdbLimit" class="form-select">
+                <option value="300">300 movies</option>
+                <option value="500" selected>500 movies</option>
+                <option value="1000">1,000 movies</option>
+                <option value="0">All remaining movies</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="imdbWorkers">Worker Threads</label>
+              <select id="imdbWorkers" class="form-select">
+                <option value="4">4 concurrent threads</option>
+                <option value="8" selected>8 concurrent threads (Standard)</option>
+                <option value="16">16 concurrent threads (Fast)</option>
+              </select>
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="imdbForce">
+              <span>Re-fetch even if IMDb rating exists</span>
+            </label>
+            <button class="btn-op-submit" type="button" onclick="startImdbTask()">
+              ▶ Run IMDb Rating Resolver
+            </button>
+          </form>
+        </div>
+
+        <!-- Operation 4: Backfill Metadata & Clean Titles -->
+        <div class="op-card">
+          <div class="op-card-header">
+            <div class="op-icon">🖼️</div>
+            <div class="op-title-area">
+              <h3>Backfill Metadata & Sources</h3>
+              <p>Populate clean search titles, server source tags, resolutions, and quality flags from directory structures.</p>
+            </div>
+          </div>
+          <form id="formBackfill" class="op-form" onsubmit="return false;">
+            <div class="form-row">
+              <label for="backfillBatch">Batch Size</label>
+              <select id="backfillBatch" class="form-select">
+                <option value="250">250 movies / batch</option>
+                <option value="500" selected>500 movies / batch</option>
+                <option value="1000">1,000 movies / batch</option>
+              </select>
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="backfillForce">
+              <span>Force re-processing of already populated movies</span>
+            </label>
+            <button class="btn-op-submit" type="button" onclick="startBackfillTask()">
+              ▶ Run Metadata Backfill
+            </button>
+          </form>
+        </div>
+
+        <!-- Operation 5: Sustainable TMDB Changes Sync -->
+        <div class="op-card">
+          <div class="op-card-header">
+            <div class="op-icon">⚡</div>
+            <div class="op-title-area">
+              <h3>Sustainable TMDB Metrics Sync</h3>
+              <p>Syncs rating, vote count, and popularity updates using TMDB Changes API without burning API quotas (95%+ calls saved).</p>
+            </div>
+          </div>
+          <form id="formChanges" class="op-form" onsubmit="return false;">
+            <div class="form-row">
+              <label for="changesDays">Days to Inspect</label>
+              <select id="changesDays" class="form-select">
+                <option value="3">Last 3 Days</option>
+                <option value="7" selected>Last 7 Days (Recommended)</option>
+                <option value="14">Last 14 Days</option>
+              </select>
+            </div>
+            <button class="btn-op-submit" type="button" onclick="startChangesTask()">
+              ▶ Sync Metrics via Changes API
+            </button>
+          </form>
+        </div>
+
+        <!-- Operation 6: Regroup Copies & Deduplication -->
+        <div class="op-card">
+          <div class="op-card-header">
+            <div class="op-icon">📀</div>
+            <div class="op-title-area">
+              <h3>Rebuild Copy Groups & Deduplication</h3>
+              <p>Re-calculates group keys and assigns primary copies prioritizing 4K &gt; 1080P &gt; 720P copies.</p>
+            </div>
+          </div>
+          <div class="op-form">
+            <p style="font-size: 0.82rem; color: var(--text-secondary);">
+              Run this if server copies are displaying as duplicate separate cards on the main cinema grid.
+            </p>
+            <button class="btn-op-submit" type="button" onclick="startRegroupTask()">
+              ▶ Recompute Groups & Primary Flags
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         Tab 3: Live Task Console & Streaming Logs
+         ============================================================ -->
+    <div id="tab-console" class="tab-panel">
+      <div class="console-container">
+        <div class="console-header">
+          <div class="console-task-info">
+            <div id="consoleTaskDot" class="status-dot"></div>
+            <div>
+              <span id="consoleTaskName" class="console-title">No active task running</span>
+              <div id="consoleTaskMeta" style="font-size: 0.76rem; color: var(--text-muted); margin-top: 2px;">
+                Ready to execute maintenance routines.
+              </div>
+            </div>
+          </div>
+          <div class="console-actions">
+            <button id="btnCopyLogs" class="btn-return-cinema" type="button" onclick="copyConsoleLogs()">
+              📋 Copy Logs
+            </button>
+            <button id="btnStopTask" class="btn-stop-task" type="button" onclick="stopActiveTask()" style="display:none;">
+              ⏹ Stop Task
+            </button>
+          </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div id="consoleProgressArea" class="console-progress-area" style="display:none;">
+          <div class="progress-stats-row">
+            <span>Progress: <strong id="consolePercent">0%</strong> (<span id="consoleItems">0/0</span>)</span>
+            <span id="consoleSpeedEta">Speed: — &bull; ETA: —</span>
+          </div>
+          <div class="progress-bar-container">
+            <div id="consoleProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+          </div>
+          <div id="consoleCurrentItem" style="font-size: 0.78rem; color: var(--text-muted); margin-top: 6px; font-family: monospace;">
+            Initializing...
+          </div>
+        </div>
+
+        <!-- Monospaced Terminal Output -->
+        <div id="consoleLogWindow" class="console-log-window">
+          <div class="log-line log-heading">CineVerse Task Runner Ready. Select an operation from Maintenance Operations.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         Tab 4: Catalog Inspector & Quick Fixes
+         ============================================================ -->
+    <div id="tab-inspector" class="tab-panel">
+      <div class="panel-card">
+        <div class="inspector-controls">
+          <div class="issue-filter-chips">
+            <button class="issue-chip active" data-issue="" onclick="setIssueFilter('')">All Titles</button>
+            <button class="issue-chip" data-issue="missing_poster" onclick="setIssueFilter('missing_poster')">Missing Poster</button>
+            <button class="issue-chip" data-issue="missing_imdb" onclick="setIssueFilter('missing_imdb')">Missing IMDb Rating</button>
+            <button class="issue-chip" data-issue="missing_genres" onclick="setIssueFilter('missing_genres')">Missing Genres</button>
+            <button class="issue-chip" data-issue="failed" onclick="setIssueFilter('failed')">Failed Parses</button>
+          </div>
+
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <button id="btnBulkFixPosters" class="btn-hub-action primary" type="button" onclick="quickFetchMissingPosters()" style="display:none;">
+              ⚡ Fetch All Missing Posters
+            </button>
+            <input id="inspectorSearch" class="inspector-search-box" type="search" placeholder="Search by title, year, IMDb ID..." autocomplete="off">
+            <button class="btn-return-cinema" type="button" onclick="loadInspectorMovies(1)">🔍 Search</button>
+          </div>
+        </div>
+
+        <table class="studio-table">
+          <thead>
+            <tr>
+              <th style="width: 44px;">Poster</th>
+              <th>Movie Title & Year</th>
+              <th>Server & Quality</th>
+              <th>IMDb Rating</th>
+              <th>Genres</th>
+              <th>Status</th>
+              <th style="text-align: right;">Quick Actions</th>
+            </tr>
+          </thead>
+          <tbody id="inspectorTableBody">
+            <tr>
+              <td colspan="7" style="text-align:center; padding: 32px; color: var(--text-muted);">
+                Loading catalog records...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Inspector Pagination -->
+        <div id="inspectorPagination" style="margin-top: 18px; display:flex; justify-content:space-between; align-items:center; font-size: 0.88rem; color: var(--text-secondary);">
+          <span id="inspectorPageInfo">Page 1</span>
+          <div style="display:flex; gap: 8px;">
+            <button id="btnPrevPage" class="btn-return-cinema" type="button" onclick="prevInspectorPage()">‹ Prev</button>
+            <button id="btnNextPage" class="btn-return-cinema" type="button" onclick="nextInspectorPage()">Next ›</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Quick Edit Modal -->
+  <div id="editModal" class="edit-modal" hidden>
+    <div class="edit-modal-backdrop" onclick="closeEditModal()"></div>
+    <div class="edit-modal-content">
+      <h2 style="font-size: 1.2rem; font-weight: 700; margin-bottom: 16px;">✏️ Quick Edit Movie Metadata</h2>
+      <form id="editMovieForm" onsubmit="return false;" style="display:flex; flex-direction:column; gap: 12px;">
+        <input type="hidden" id="editMovieId">
+        <div class="form-row">
+          <label for="editCleanTitle">Clean Title</label>
+          <input id="editCleanTitle" class="form-input" type="text" required>
+        </div>
+        <div class="form-row">
+          <label for="editYear">Year</label>
+          <input id="editYear" class="form-input" type="number" min="1900" max="2030">
+        </div>
+        <div class="form-row">
+          <label for="editImdbId">IMDb ID (tt...)</label>
+          <input id="editImdbId" class="form-input" type="text" placeholder="tt0111161">
+        </div>
+        <div class="form-row">
+          <label for="editImdbRating">IMDb Rating (1.0 - 10.0)</label>
+          <input id="editImdbRating" class="form-input" type="number" step="0.1" min="0" max="10">
+        </div>
+        <div class="form-row">
+          <label for="editGenres">Genres (comma-separated)</label>
+          <input id="editGenres" class="form-input" type="text" placeholder="Action, Adventure, Sci-Fi">
+        </div>
+        <div class="form-row">
+          <label for="editPosterUrl">Poster Image URL (optional)</label>
+          <input id="editPosterUrl" class="form-input" type="url" placeholder="https://image.tmdb.org/t/p/w500/...">
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap: 10px; margin-top: 12px;">
+          <button class="btn-return-cinema" type="button" onclick="closeEditModal()">Cancel</button>
+          <button class="btn-op-submit" type="button" onclick="saveMovieEdit()" style="padding: 0 20px;">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Tab switching logic
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const tabPanels = document.querySelectorAll('.tab-panel');
+
+    function switchTab(tabId) {
+      tabButtons.forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+      tabPanels.forEach(p => p.classList.toggle('active', p.id === `tab-${tabId}`));
+      if (tabId === 'inspector') {
+        loadInspectorMovies(1);
+      }
+    }
+
+    tabButtons.forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    // Auto-switch tab based on URL query params (?tab=operations or ?action=fetch_posters or ?issue=missing_poster)
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialTab = urlParams.get('tab');
+    const initialAction = urlParams.get('action');
+    const initialIssue = urlParams.get('issue');
+
+    if (initialAction === 'fetch_posters') {
+      switchTab('operations');
+      setTimeout(() => {
+        const card = document.querySelector('.featured-op-card');
+        if (card) {
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          card.style.boxShadow = '0 0 0 3px var(--accent), 0 8px 30px rgba(59, 130, 246, 0.4)';
+        }
+      }, 200);
+    } else if (initialIssue) {
+      switchTab('inspector');
+      setIssueFilter(initialIssue);
+    } else if (initialTab && document.getElementById(`tab-${initialTab}`)) {
+      switchTab(initialTab);
+    }
+
+    function setPresetUrl(url) {
+      document.getElementById('crawlUrl').value = url;
+    }
+
+    // ============================================================
+    // Real-Time Task Polling Engine
+    // ============================================================
+    let pollInterval = null;
+    let isTaskActive = false;
+
+    function pollTaskStatus() {
+      fetch('/manage/api/task/status/')
+        .then(r => r.json())
+        .then(data => {
+          const pill = document.getElementById('taskStatusPill');
+          const pillText = document.getElementById('taskStatusText');
+          const consoleDot = document.getElementById('consoleTaskDot');
+          const consoleName = document.getElementById('consoleTaskName');
+          const consoleMeta = document.getElementById('consoleTaskMeta');
+          const stopBtn = document.getElementById('btnStopTask');
+          const progressArea = document.getElementById('consoleProgressArea');
+          const badge = document.getElementById('consoleTaskBadge');
+
+          isTaskActive = data.status === 'running';
+
+          if (isTaskActive) {
+            pill.classList.add('running');
+            pillText.textContent = `Running: ${data.task_name} (${data.progress_percent.toFixed(0)}%)`;
+            badge.style.display = 'inline-block';
+            stopBtn.style.display = 'inline-flex';
+            progressArea.style.display = 'block';
+
+            consoleDot.style.background = '#3b82f6';
+            consoleDot.style.boxShadow = '0 0 10px #3b82f6';
+            consoleName.textContent = data.task_name;
+            consoleMeta.textContent = `Started at: ${data.started_at || 'just now'}`;
+
+            document.getElementById('consolePercent').textContent = `${data.progress_percent.toFixed(1)}%`;
+            document.getElementById('consoleItems').textContent = `${data.progress_current}/${data.progress_total}`;
+            document.getElementById('consoleProgressBar').style.width = `${data.progress_percent}%`;
+            document.getElementById('consoleSpeedEta').textContent = `Speed: ${data.speed || '—'} • ETA: ${data.eta || 'calculating...'}`;
+            document.getElementById('consoleCurrentItem').textContent = data.current_item || '';
+          } else {
+            pill.classList.remove('running');
+            badge.style.display = 'none';
+            stopBtn.style.display = 'none';
+            consoleDot.style.background = 'var(--text-muted)';
+            consoleDot.style.boxShadow = 'none';
+
+            if (data.status === 'completed') {
+              pillText.textContent = 'Last Task: Completed';
+              consoleName.textContent = `${data.task_name} (Completed)`;
+              consoleMeta.textContent = `Finished at: ${data.finished_at || ''}`;
+              progressArea.style.display = 'block';
+              document.getElementById('consoleProgressBar').style.width = '100%';
+              document.getElementById('consolePercent').textContent = '100%';
+            } else if (data.status === 'failed') {
+              pillText.textContent = 'Last Task: Failed';
+              consoleName.textContent = `${data.task_name} (Failed)`;
+              consoleMeta.textContent = `Error: ${data.error_message || 'Unknown failure'}`;
+            } else if (data.status === 'stopped') {
+              pillText.textContent = 'Last Task: Stopped';
+              consoleName.textContent = `${data.task_name} (Stopped by User)`;
+            } else {
+              pillText.textContent = 'System Idle';
+              consoleName.textContent = 'No active task running';
+              consoleMeta.textContent = 'Ready to launch maintenance routines.';
+              progressArea.style.display = 'none';
+            }
+          }
+
+          // Render Logs
+          if (data.logs && data.logs.length) {
+            const win = document.getElementById('consoleLogWindow');
+            const wasScrolledToBottom = win.scrollHeight - win.clientHeight <= win.scrollTop + 40;
+
+            win.innerHTML = data.logs.map(line => {
+              let cls = 'log-line';
+              if (line.includes('[SUCCESS]') || line.includes('[OK]')) cls += ' log-success';
+              else if (line.includes('[FAIL]') || line.includes('[ERROR]') || line.includes('Error')) cls += ' log-error';
+              else if (line.includes('===') || line.includes('Starting')) cls += ' log-heading';
+              else if (line.includes('remaining:')) cls += ' log-progress';
+              return `<div class="${cls}">${escapeHtml(line)}</div>`;
+            }).join('');
+
+            if (wasScrolledToBottom) {
+              win.scrollTop = win.scrollHeight;
+            }
+          }
+        })
+        .catch(console.error);
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Start poll loop
+    setInterval(pollTaskStatus, 1500);
+    pollTaskStatus();
+
+    // ============================================================
+    // Launch Operations Functions
+    // ============================================================
+    function triggerTask(type, params) {
+      fetch('/manage/api/task/start/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_type: type, params: params })
+      })
+      .then(r => {
+        if (!r.ok) throw new Error('Server returned ' + r.status);
+        return r.json();
+      })
+      .then(res => {
+        if (res.success) {
+          switchTab('console');
+          pollTaskStatus();
+        } else {
+          alert('Could not start task: ' + res.message);
+        }
+      })
+      .catch(err => alert('Network error: ' + err.message));
+    }
+
+    function startPostersTask() {
+      const limit = document.getElementById('postersLimit').value;
+      const workers = document.getElementById('postersWorkers').value;
+      const force = document.getElementById('postersForce').checked;
+      const details = document.getElementById('postersIncludeDetails').checked;
+
+      triggerTask('fetch_posters', {
+        limit: limit === '0' ? null : parseInt(limit, 10),
+        workers: parseInt(workers, 10),
+        force: force,
+        include_details: details,
+      });
+    }
+
+    function quickFetchMissingPosters() {
+      triggerTask('fetch_posters', {
+        limit: null,
+        workers: 12,
+        force: false,
+        include_details: true,
+      });
+    }
+
+    function quickFetchMissingGenres() {
+      triggerTask('fetch_genres', {
+        limit: null,
+        workers: 16,
+        force: false,
+        all: true,
+      });
+    }
+
+    function quickFetchMissingImdb() {
+      triggerTask('fetch_imdb', {
+        limit: null,
+        workers: 8,
+        force: false,
+        all: true,
+      });
+    }
+
+    function startCrawlTask() {
+      const url = document.getElementById('crawlUrl').value.trim();
+      if (!url) return alert('Please enter a valid H5AI URL.');
+      const limit = document.getElementById('crawlLimit').value;
+      const force = document.getElementById('crawlForce').checked;
+      const retry = document.getElementById('crawlRetryFailed').checked;
+
+      triggerTask('crawl', { url: url, max_items: limit, force: force, retry_failed: retry });
+    }
+
+    function startGenresTask() {
+      const limit = document.getElementById('genresLimit').value;
+      const workers = document.getElementById('genresWorkers').value;
+      const force = document.getElementById('genresForce').checked;
+
+      triggerTask('fetch_genres', { limit: limit, workers: workers, force: force, all: limit === '0' });
+    }
+
+    function startImdbTask() {
+      const limit = document.getElementById('imdbLimit').value;
+      const workers = document.getElementById('imdbWorkers').value;
+      const force = document.getElementById('imdbForce').checked;
+
+      triggerTask('fetch_imdb', { limit: limit, workers: workers, force: force, all: limit === '0' });
+    }
+
+    function startBackfillTask() {
+      const batch = document.getElementById('backfillBatch').value;
+      const force = document.getElementById('backfillForce').checked;
+
+      triggerTask('backfill_metadata', { batch_size: batch, force: force });
+    }
+
+    function startChangesTask() {
+      const days = document.getElementById('changesDays').value;
+      triggerTask('refresh_metadata', { changes: true, days: days });
+    }
+
+    function startRegroupTask() {
+      if (confirm('Rebuild deduplication groups and recalculate primary copy flags across all files?')) {
+        triggerTask('regroup_copies', {});
+      }
+    }
+
+    function stopActiveTask() {
+      if (confirm('Are you sure you want to cancel the running task?')) {
+        fetch('/manage/api/task/stop/', { method: 'POST' })
+          .then(r => r.json())
+          .then(res => {
+            alert(res.message);
+            pollTaskStatus();
+          });
+      }
+    }
+
+    function copyConsoleLogs() {
+      const win = document.getElementById('consoleLogWindow');
+      navigator.clipboard.writeText(win.innerText)
+        .then(() => alert('Console logs copied to clipboard!'))
+        .catch(err => alert('Error copying: ' + err));
+    }
+
+    // Refresh live stats button
+    document.getElementById('btnRefreshStats').addEventListener('click', () => {
+      fetch('/manage/api/stats/')
+        .then(r => r.json())
+        .then(s => {
+          document.getElementById('statTotalFiles').textContent = Number(s.total_files).toLocaleString();
+          document.getElementById('statUniqueMovies').textContent = Number(s.unique_movies).toLocaleString();
+          document.getElementById('statPosterPct').textContent = `${s.poster_pct}%`;
+          document.getElementById('statPosterCounts').textContent = `${s.with_posters.toLocaleString()} found • ${s.missing_posters.toLocaleString()} missing`;
+          document.getElementById('barPoster').style.width = `${s.poster_pct}%`;
+
+          document.getElementById('statImdbPct').textContent = `${s.imdb_pct}%`;
+          document.getElementById('statImdbCounts').textContent = `${s.with_imdb.toLocaleString()} rated • ${s.missing_imdb.toLocaleString()} pending`;
+          document.getElementById('barImdb').style.width = `${s.imdb_pct}%`;
+
+          document.getElementById('statGenresPct').textContent = `${s.genres_pct}%`;
+          document.getElementById('statGenresCounts').textContent = `${s.with_genres.toLocaleString()} tagged • ${s.missing_genres.toLocaleString()} pending`;
+          document.getElementById('barGenres').style.width = `${s.genres_pct}%`;
+        });
+    });
+
+    // ============================================================
+    // Catalog Inspector Logic
+    // ============================================================
+    let currentInspectorPage = 1;
+    let currentIssueFilter = '';
+    let totalInspectorPages = 1;
+
+    function setIssueFilter(issue) {
+      currentIssueFilter = issue;
+      document.querySelectorAll('.issue-chip').forEach(c => c.classList.toggle('active', c.dataset.issue === issue));
+      const btnBulk = document.getElementById('btnBulkFixPosters');
+      if (btnBulk) {
+        btnBulk.style.display = (issue === 'missing_poster' || issue === 'failed') ? 'inline-flex' : 'none';
+      }
+      loadInspectorMovies(1);
+    }
+
+    function loadInspectorMovies(page = 1) {
+      currentInspectorPage = page;
+      const q = document.getElementById('inspectorSearch').value.trim();
+      const tbody = document.getElementById('inspectorTableBody');
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 24px;">Loading...</td></tr>';
+
+      const qs = new URLSearchParams({
+        page: page,
+        issue: currentIssueFilter,
+        q: q
+      });
+
+      fetch('/manage/api/movies/?' + qs.toString())
+        .then(r => r.json())
+        .then(data => {
+          totalInspectorPages = data.num_pages || 1;
+          document.getElementById('inspectorPageInfo').textContent = `Page ${data.current_page} of ${totalInspectorPages} (${data.total.toLocaleString()} movies)`;
+          document.getElementById('btnPrevPage').disabled = data.current_page <= 1;
+          document.getElementById('btnNextPage').disabled = data.current_page >= totalInspectorPages;
+
+          if (!data.movies || !data.movies.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 32px; color: var(--text-muted);">No movies match the selected filters.</td></tr>';
+            return;
+          }
+
+          tbody.innerHTML = data.movies.map(m => `
+            <tr id="movie-row-${m.id}">
+              <td>
+                ${m.poster_url ?
+                  `<img class="thumb-poster" src="${m.poster_url}" alt="poster" loading="lazy">` :
+                  `<button class="thumb-no-poster btn-find-poster" type="button" onclick="refetchSingleMovie(${m.id})" title="Click to auto-fetch poster from TMDB">🔍 Find</button>`
+                }
+              </td>
+              <td>
+                <strong>${escapeHtml(m.title)}</strong> ${m.year ? `<span style="color:var(--text-muted);">(${m.year})</span>` : ''}
+                <div style="font-size: 0.74rem; color: var(--text-muted); font-family: monospace; margin-top: 2px;">
+                  ${m.is_primary ? '<span class="studio-badge" style="font-size:0.65rem;">Primary</span>' : ''} ${escapeHtml(m.raw_title.substring(0, 45))}
+                </div>
+              </td>
+              <td>
+                <span class="studio-badge">${escapeHtml(m.source || 'Local')}</span>
+                <span style="font-size: 0.78rem; color: var(--text-secondary); margin-left: 4px;">${escapeHtml(m.resolution || 'HD')}</span>
+              </td>
+              <td>
+                ${m.imdb_rating ? `<span style="color: #f59e0b; font-weight: 700;">★ ${m.imdb_rating.toFixed(1)}</span>` : '<span style="color: var(--text-muted);">—</span>'}
+                ${m.imdb_id ? `<div style="font-size: 0.72rem; color: var(--text-muted);">${m.imdb_id}</div>` : ''}
+              </td>
+              <td>
+                <span style="font-size: 0.8rem; color: var(--text-secondary);">${escapeHtml(m.genres ? m.genres.substring(0, 30) : '—')}</span>
+              </td>
+              <td>
+                <span class="status-badge-sm ${m.metadata_status}">${m.metadata_status}</span>
+              </td>
+              <td style="text-align: right;">
+                <button class="btn-action-sm" type="button" title="Refetch metadata, poster and IMDb rating" onclick="refetchSingleMovie(${m.id})">🔄 Refetch</button>
+                <button class="btn-action-sm" type="button" title="Edit manual IDs & Poster URL" onclick="openEditModal(${m.id}, '${escapeHtml(m.title)}', ${m.year || "''"}, '${m.imdb_id || ''}', ${m.imdb_rating || "''"}, '${escapeHtml(m.genres || '')}', '${escapeHtml(m.poster_url || '')}')">✏️ Edit</button>
+                <button class="btn-action-sm danger" type="button" title="Delete record" onclick="deleteSingleMovie(${m.id})">🗑️</button>
+              </td>
+            </tr>
+          `).join('');
+        });
+    }
+
+    function prevInspectorPage() {
+      if (currentInspectorPage > 1) loadInspectorMovies(currentInspectorPage - 1);
+    }
+
+    function nextInspectorPage() {
+      if (currentInspectorPage < totalInspectorPages) loadInspectorMovies(currentInspectorPage + 1);
+    }
+
+    document.getElementById('inspectorSearch').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        loadInspectorMovies(1);
+      }
+    });
+
+    function refetchSingleMovie(id) {
+      const row = document.getElementById(`movie-row-${id}`);
+      if (row) row.style.opacity = '0.5';
+
+      fetch(`/manage/api/movie/${id}/action/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'refresh' })
+      })
+      .then(r => {
+        if (!r.ok) throw new Error('Server returned ' + r.status);
+        return r.json();
+      })
+      .then(res => {
+        if (res.success) {
+          loadInspectorMovies(currentInspectorPage);
+        } else {
+          alert('Could not refresh movie: ' + res.message);
+        }
+      })
+      .catch(err => {
+        alert('Error: ' + err.message);
+      })
+      .finally(() => {
+        if (row) row.style.opacity = '1';
+      });
+    }
+
+    function deleteSingleMovie(id) {
+      if (confirm('Are you sure you want to delete this movie record from CineVerse?')) {
+        fetch(`/manage/api/movie/${id}/action/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete' })
+        })
+        .then(r => {
+          if (!r.ok) throw new Error('Server returned ' + r.status);
+          return r.json();
+        })
+        .then(res => {
+          if (res.success) {
+            loadInspectorMovies(currentInspectorPage);
+          } else {
+            alert('Could not delete: ' + res.message);
+          }
+        })
+        .catch(err => alert('Error: ' + err.message));
+      }
+    }
+
+    // Modal Edit Functions
+    const editModal = document.getElementById('editModal');
+    function openEditModal(id, title, year, imdbId, imdbRating, genres, posterUrl) {
+      document.getElementById('editMovieId').value = id;
+      document.getElementById('editCleanTitle').value = title;
+      document.getElementById('editYear').value = year;
+      document.getElementById('editImdbId').value = imdbId;
+      document.getElementById('editImdbRating').value = imdbRating;
+      document.getElementById('editGenres').value = genres;
+      document.getElementById('editPosterUrl').value = posterUrl || '';
+      editModal.hidden = false;
+    }
+
+    function closeEditModal() {
+      editModal.hidden = true;
+    }
+
+    function saveMovieEdit() {
+      const id = document.getElementById('editMovieId').value;
+      const cleanTitle = document.getElementById('editCleanTitle').value.trim();
+      const year = document.getElementById('editYear').value;
+      const imdbId = document.getElementById('editImdbId').value.trim();
+      const imdbRating = document.getElementById('editImdbRating').value;
+      const genres = document.getElementById('editGenres').value.trim();
+      const posterUrl = document.getElementById('editPosterUrl').value.trim();
+
+      fetch(`/manage/api/movie/${id}/action/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_ids',
+          clean_title: cleanTitle,
+          year: year,
+          imdb_id: imdbId,
+          imdb_rating: imdbRating,
+          genres: genres,
+          poster_url: posterUrl,
+        })
+      })
+      .then(r => {
+        if (!r.ok) throw new Error('Server returned ' + r.status);
+        return r.json();
+      })
+      .then(res => {
+        if (res.success) {
+          closeEditModal();
+          loadInspectorMovies(currentInspectorPage);
+        } else {
+          alert('Error updating: ' + res.message);
+        }
+      })
+      .catch(err => alert('Error: ' + err.message));
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: cineverse
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SECRET_KEY=change-this-in-production-to-a-secure-random-string
+      - DJANGO_DEBUG=False
+      - DJANGO_ALLOWED_HOSTS=*
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - H5AI_BASE_URL=${H5AI_BASE_URL:-}
+    volumes:
+      - ./data:/app/data
+      - ./db.sqlite3:/app/db.sqlite3

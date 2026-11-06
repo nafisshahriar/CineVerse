@@ -1,41 +1,255 @@
 import re
 import os
+import time
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, unquote
 from datetime import datetime, timedelta, timezone as dt_timezone
 from django.utils import timezone
 
 TMDB_API_KEY = os.getenv('TMDB_API_KEY')
 OMDB_API_KEY = os.getenv('OMDB_API_KEY')
 
-TITLE_YEAR_RE = re.compile(r'^(?P<title>.+?)\s*\((?P<year>\d{4})\)')
-# Extended media extensions to catch more file types
 MEDIA_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.wmv', '.flv', '.ts', '.m2ts')
+
+IGNORED_DIRS = {
+    'subs', 'sub', 'subtitle', 'subtitles', 'sample', 'samples',
+    'extras', 'extra', 'trailers', 'trailer', 'featurettes', 'featurette'
+}
+
+LANGUAGE_MAP = {
+    'korean': 'Korean', 'japanese': 'Japanese', 'hindi': 'Hindi',
+    'german': 'German', 'french': 'French', 'spanish': 'Spanish',
+    'iranian': 'Persian', 'persian': 'Persian', 'turkish': 'Turkish',
+    'danish': 'Danish', 'swedish': 'Swedish', 'russian': 'Russian',
+    'italian': 'Italian', 'thai': 'Thai', 'chinese': 'Chinese',
+    'tamil': 'Tamil', 'telugu': 'Telugu', 'malayalam': 'Malayalam',
+    'bengali': 'Bengali', 'bangla': 'Bengali', 'polish': 'Polish',
+    'dutch': 'Dutch', 'portuguese': 'Portuguese', 'indonesian': 'Indonesian',
+    'norwegian': 'Norwegian', 'arabic': 'Arabic', 'english': 'English'
+}
+
+TMDB_LANG_MAP = {
+    'en': 'English', 'ko': 'Korean', 'ja': 'Japanese', 'hi': 'Hindi',
+    'es': 'Spanish', 'fr': 'French', 'de': 'German', 'it': 'Italian',
+    'ru': 'Russian', 'zh': 'Chinese', 'cn': 'Chinese', 'pt': 'Portuguese',
+    'fa': 'Persian', 'tr': 'Turkish', 'da': 'Danish', 'sv': 'Swedish',
+    'th': 'Thai', 'nl': 'Dutch', 'pl': 'Polish', 'ar': 'Arabic',
+    'bn': 'Bengali', 'ta': 'Tamil', 'te': 'Telugu', 'ml': 'Malayalam',
+    'id': 'Indonesian', 'no': 'Norwegian', 'fi': 'Finnish', 'el': 'Greek'
+}
+
+
+class ProgressTracker:
+    """
+    Progress tracker calculating completed, remaining, percentage,
+    items/second speed, and estimated time remaining (ETA).
+    """
+    def __init__(self, total: int, desc: str = "Processing"):
+        self.total = max(1, total)
+        self.desc = desc
+        self.start_time = time.time()
+        self.processed = 0
+        self.success = 0
+        self.failed = 0
+
+    def tick(self, success: bool = True, title: str = "", extra: str = "") -> str:
+        self.processed += 1
+        if success:
+            self.success += 1
+        else:
+            self.failed += 1
+
+        now = time.time()
+        elapsed = max(0.1, now - self.start_time)
+        rate = self.processed / elapsed
+        remaining = max(0, self.total - self.processed)
+        eta_seconds = int(remaining / rate) if rate > 0 else 0
+        eta_str = f"{eta_seconds // 60:02d}m {eta_seconds % 60:02d}s"
+        percent = (self.processed / self.total) * 100.0
+
+        status = f"[{self.processed}/{self.total}] ({percent:5.1f}%) | {remaining} left | ETA: {eta_str} ({rate:.1f}/s)"
+        if title:
+            mark = "[OK]" if success else "[FAIL]"
+            status += f" | {mark} {title}"
+        if extra:
+            status += f" ({extra})"
+        return status
+
+
+def detect_source(url: str) -> str:
+    """Detect readable server / source name from URL."""
+    if not url:
+        return 'Local'
+    u = unquote(url).lower()
+    netloc = urlparse(url).netloc
+    if 'dhaka-flix-14' in u or '172.16.50.14' in netloc:
+        return 'Dhaka-Flix 14'
+    if 'dhaka-flix-7' in u or '172.16.50.7' in netloc:
+        return 'Dhaka-Flix 7'
+    if 'ebox.live' in netloc:
+        return 'E-Box'
+    if netloc:
+        return netloc
+    return 'Local'
+
+
+def detect_resolution(text: str) -> str:
+    """Extract standard resolution tag (4K, 1080p, 720p, 480p)."""
+    if not text:
+        return ''
+    m = re.search(r'(?:^|[^a-zA-Z0-9])(2160p|4k|1080p|720p|480p)(?:$|[^a-zA-Z0-9])', text, flags=re.I)
+    if m:
+        val = m.group(1).upper()
+        return '4K' if val == '2160P' else val
+    return ''
+
+
+def detect_quality(text: str) -> str:
+    """Extract release quality (BluRay, WEB-DL, HDRip, DVDRip, etc.)."""
+    if not text:
+        return ''
+    if re.search(r'\b(bluray|blu-ray|bdrip|brrip)\b', text, flags=re.I):
+        return 'BluRay'
+    if re.search(r'\b(web-dl|webdl|web-rip|webrip|web)\b', text, flags=re.I):
+        return 'WEB-DL'
+    if re.search(r'\b(hdrip|hdtv)\b', text, flags=re.I):
+        return 'HDRip'
+    if re.search(r'\b(dvdrip|dvd)\b', text, flags=re.I):
+        return 'DVDRip'
+    if re.search(r'\b(cam|telesync|hdcam)\b', text, flags=re.I):
+        return 'CAM'
+    return ''
+
+
+def detect_language(url: str = '', filename: str = '', tmdb_code: str = '') -> str:
+    """Detect language from TMDB code, directory path, or filename."""
+    if tmdb_code and tmdb_code.lower() in TMDB_LANG_MAP:
+        return TMDB_LANG_MAP[tmdb_code.lower()]
+    combined = (unquote(url) + ' ' + unquote(filename)).lower()
+    for key, lang in LANGUAGE_MAP.items():
+        if key in combined:
+            return lang
+    return 'English'
+
+
+def clean_movie_title(raw_name: str) -> tuple[str, str]:
+    """
+    Clean raw filename or folder into a pure movie title and 4-digit year.
+    Handles scene tags, release groups, track numbers, and special characters.
+    """
+    name = unquote(raw_name).strip()
+
+    # Strip extension
+    for ext in MEDIA_EXTS:
+        if name.lower().endswith(ext):
+            name = name[:-len(ext)].strip()
+            break
+
+    # Strip release group / suffix tags: -mkvC, -MkvCage, [E-BOX], _MYFLIX, etc.
+    name = re.sub(r'[-_]\s*([a-zA-Z0-9]+)$', '', name)
+    name = re.sub(
+        r'\[(?:E-BOX|MYFLIX|MkvCage|mkvC|KA|GetS|LION|Mkvking|YTS|RARBG|Dual Audio|Hindi|Tamil|Telugu).*?\]',
+        '', name, flags=re.I
+    )
+
+    # Strip track numbering at start (e.g. '01 - ', '01.-', '01. ')
+    name = re.sub(r'^\d{1,3}\s*[-–—]\s*', '', name)
+    name = re.sub(r'^\d{1,3}\.\s+(?=[a-zA-Z])', '', name)
+
+    # Franchise prefixes before a dash: '01-James Bond - Dr. No' -> 'Dr. No'
+    if ' - ' in name:
+        parts = name.split(' - ')
+        if len(parts) == 2 and any(k in parts[0].lower() for k in ['james bond', 'mcu', 'marvel', 'star wars', 'harry potter', 'dc']):
+            name = parts[1].strip()
+
+    # Extract year (prefer 4 digits between 1900 and 2039)
+    year = ''
+    y_match = re.search(r'[\(\[\s_.-](19\d\d|20[0-3]\d)[\)\]\s_.-]', name)
+    if not y_match:
+        y_match = re.search(r'\b(19\d\d|20[0-3]\d)\b', name)
+
+    if y_match:
+        year = y_match.group(1)
+        title_part = name[:y_match.start()].strip()
+    else:
+        title_part = name
+
+    # Scene dot-separated words: replace dots with spaces (protect decimal numbers like 0.0)
+    if '.' in title_part and not re.search(r'\b\d+\.\d+\b', title_part):
+        title_part = title_part.replace('.', ' ')
+    if '_' in title_part:
+        title_part = title_part.replace('_', ' ')
+
+    # Strip quality/codec tags before year
+    title_part = re.sub(
+        r'\b(2160p|4k|1080p|720p|480p|bluray|x264|x265|hevc|web-dl|webrip|hdrip|korean|hindi)\b.*',
+        '', title_part, flags=re.I
+    )
+
+    # Clean brackets, preserving titles starting with (500)
+    if not title_part.startswith('(500)'):
+        title_part = re.sub(r'\[.*?\]', '', title_part)
+        title_part = re.sub(r'\((?!500\b).*?\)', '', title_part)
+
+    clean = re.sub(r'\s+', ' ', title_part).strip(' -._:,#')
+    return clean or name, year
+
+
+def parse_movie_info(dir_name: str, file_name: str, file_url: str = '', tmdb_lang: str = '') -> dict:
+    """
+    Parse complete structured movie information combining directory and file details.
+    """
+    # If directory name is generic or missing, prioritize filename
+    d_clean = unquote(dir_name).strip(' /\\')
+    f_clean = unquote(file_name).strip()
+
+    is_generic_dir = not d_clean or re.match(r'^(\[\s*\d{4}\s*\]|\d{4}|subs?)$', d_clean, flags=re.I)
+    primary_name = f_clean if is_generic_dir else d_clean
+
+    title, year = clean_movie_title(primary_name)
+    if not year and not is_generic_dir:
+        # Fallback to check filename for year if folder didn't have it
+        _, f_year = clean_movie_title(f_clean)
+        year = f_year
+
+    # If title parsed as empty or pure punctuation, fallback to filename
+    if not title or len(title) < 2 or title in ('/', '\\', '-'):
+        title, year = clean_movie_title(f_clean)
+
+    combined_text = f"{dir_name} {file_name} {file_url}"
+    source = detect_source(file_url)
+    resolution = detect_resolution(combined_text)
+    quality = detect_quality(combined_text)
+    language = detect_language(url=file_url, filename=file_name, tmdb_code=tmdb_lang)
+
+    # Group key for deduplicating identical movies across sources
+    norm_title = re.sub(r'[^a-zA-Z0-9]+', '', title).lower()
+    group_key = f"{norm_title}:::{year or ''}"
+
+    return {
+        'title': title,
+        'clean_title': title,
+        'year': int(year) if year and year.isdigit() else None,
+        'year_str': year or '',
+        'source': source,
+        'resolution': resolution,
+        'quality': quality,
+        'language': language,
+        'group_key': group_key,
+    }
 
 
 def parse_title_year(name: str):
-    """Parse title and year from a movie folder/file name"""
-    # Remove file extension if present
-    for ext in MEDIA_EXTS:
-        if name.lower().endswith(ext):
-            name = name[:-len(ext)]
-            break
-    
-    m = TITLE_YEAR_RE.search(name)
-    if m:
-        return m.group('title').strip(), m.group('year')
-    m2 = re.search(r'(\d{4})', name)
-    year = m2.group(1) if m2 else ''
-    title = re.sub(r'\b\d{3,4}p\b|\[.*?\]|\(.*?\)', '', name).strip()
+    """Backwards-compatible wrapper for title and year parsing."""
+    title, year = clean_movie_title(name)
     return title, year
 
 
 def clean_title_for_search(raw: str):
-    t = re.sub(r'\[.*?\]', '', raw)
-    t = re.sub(r'\d{3,4}p\b', '', t)
-    t = re.sub(r'\(.*?\)', '', t)
-    return re.sub(r'\s+', ' ', t).strip()
+    """Backwards-compatible wrapper for TMDB search query preparation."""
+    clean, _ = clean_movie_title(raw)
+    return clean
 
 
 def list_h5ai_directory(url: str, timeout: int = 10):
@@ -43,9 +257,7 @@ def list_h5ai_directory(url: str, timeout: int = 10):
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, 'html.parser')
     links = []
-    # H5AI often uses a table or list; be permissive
     for row in soup.find_all(['tr', 'li', 'div']):
-        # find anchor within the row
         a = row.find('a', href=True)
         if not a:
             continue
@@ -55,7 +267,6 @@ def list_h5ai_directory(url: str, timeout: int = 10):
             continue
         raw_line = row.get_text(' ', strip=True)
         links.append((text, urljoin(url, href), raw_line))
-    # fallback: anchors at top-level
     if not links:
         for a in soup.find_all('a', href=True):
             href = a['href']
@@ -68,10 +279,8 @@ def list_h5ai_directory(url: str, timeout: int = 10):
 
 
 def extract_last_modified_from_text(raw_line: str):
-    """Extract date from text and return as timezone-aware datetime"""
     if not raw_line:
         return None
-    # common ISO style
     m = re.search(r'(20\d{2}-\d{2}-\d{2}\s*\d{2}:\d{2}:\d{2})', raw_line)
     if m:
         try:
@@ -101,14 +310,6 @@ def extract_last_modified_from_text(raw_line: str):
 
 
 def crawl_h5ai_recursive(root_url: str, per_request_timeout: int = 8, max_items: int = None):
-    """
-    Recursively crawl H5AI directory structure.
-    
-    Args:
-        root_url: Starting URL to crawl
-        per_request_timeout: Timeout for each HTTP request
-        max_items: Maximum items to yield (None = unlimited)
-    """
     seen = set()
     queue = [root_url]
     yielded = 0
@@ -120,7 +321,6 @@ def crawl_h5ai_recursive(root_url: str, per_request_timeout: int = 8, max_items:
         try:
             items = list_h5ai_directory(cur, timeout=per_request_timeout)
         except requests.exceptions.Timeout:
-            # skip directories that timeout
             continue
         except Exception:
             continue
@@ -129,7 +329,10 @@ def crawl_h5ai_recursive(root_url: str, per_request_timeout: int = 8, max_items:
             yielded += 1
             yield {'name': text, 'url': href, 'is_dir': is_dir, 'raw': raw}
             if is_dir:
-                queue.append(href)
+                # Skip known junk directories
+                norm_text = text.strip(' /\\').lower()
+                if norm_text not in IGNORED_DIRS:
+                    queue.append(href)
 
 
 def find_media_in_directory(url: str, timeout: int = 6):
@@ -143,6 +346,29 @@ def find_media_in_directory(url: str, timeout: int = 6):
         if any(low.endswith(ext) for ext in MEDIA_EXTS):
             media.append((text, href, raw))
     return media
+
+
+TMDB_GENRES = {
+    28: 'Action',
+    12: 'Adventure',
+    16: 'Animation',
+    35: 'Comedy',
+    80: 'Crime',
+    99: 'Documentary',
+    18: 'Drama',
+    10751: 'Family',
+    14: 'Fantasy',
+    36: 'History',
+    27: 'Horror',
+    10402: 'Music',
+    9648: 'Mystery',
+    10749: 'Romance',
+    878: 'Science Fiction',
+    10770: 'TV Movie',
+    53: 'Thriller',
+    10752: 'War',
+    37: 'Western',
+}
 
 
 def fetch_tmdb_details(title: str, year: str = ''):
@@ -159,11 +385,15 @@ def fetch_tmdb_details(title: str, year: str = ''):
     if not results:
         return None
     movie = results[0]
+    genre_names = [TMDB_GENRES[gid] for gid in movie.get('genre_ids', []) if gid in TMDB_GENRES]
     out = {
         'poster_url': ('https://image.tmdb.org/t/p/w500' + movie['poster_path']) if movie.get('poster_path') else None,
         'popularity': movie.get('popularity'),
         'vote_count': movie.get('vote_count'),
         'vote_average': movie.get('vote_average'),
+        'genres': genre_names,
+        'genres_str': ', '.join(genre_names),
+        'tmdb_id': movie.get('id'),
     }
     return out
 
@@ -181,6 +411,81 @@ def fetch_poster_omdb(title: str, year: str = ''):
     if poster and poster != 'N/A':
         return poster
     return None
+
+
+def fetch_imdb_rating_and_id(title: str, year=None, known_imdb_id: str = None) -> tuple[float | None, str | None, list]:
+    """
+    Fetch authentic IMDb rating, IMDb ID (tt...), and genres using Cinemeta and IMDb suggestion API.
+    Zero API key required, fast and accurate.
+    """
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+
+    # If known IMDb ID is provided (e.g. from TMDB)
+    if known_imdb_id and known_imdb_id.startswith('tt'):
+        try:
+            r = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{known_imdb_id}.json', timeout=4)
+            if r.status_code == 200:
+                meta = r.json().get('meta', {})
+                rate = meta.get('imdbRating')
+                genres = meta.get('genres') or []
+                if rate:
+                    try:
+                        return float(rate), known_imdb_id, genres
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            pass
+
+    # Search IMDb suggestion API
+    clean = re.sub(r'[^a-zA-Z0-9\s]+', ' ', title).strip().lower()
+    q = re.sub(r'\s+', '_', clean)
+    if not q:
+        return None, None, []
+
+    try:
+        r = requests.get(f'https://v3.sg.media-imdb.com/suggestion/x/{q}.json', headers=headers, timeout=4)
+        if r.status_code == 200:
+            entries = r.json().get('d', [])
+            candidates = [item for item in entries if item.get('q') in ('feature', 'TV movie', 'movie', None)]
+            
+            # Helper to try candidate
+            def check_candidate(item):
+                imdb_id = item.get('id')
+                if imdb_id and imdb_id.startswith('tt'):
+                    try:
+                        r2 = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{imdb_id}.json', timeout=4)
+                        if r2.status_code == 200:
+                            meta = r2.json().get('meta', {})
+                            rate = meta.get('imdbRating')
+                            genres = meta.get('genres') or []
+                            if rate:
+                                return float(rate), imdb_id, genres
+                    except Exception:
+                        pass
+                return None, None, []
+
+            # First pass: matching year within +/- 1
+            if year:
+                for item in candidates:
+                    item_year = item.get('y')
+                    if item_year:
+                        try:
+                            if abs(int(item_year) - int(year)) <= 1:
+                                rate, i_id, g_list = check_candidate(item)
+                                if rate is not None:
+                                    return rate, i_id, g_list
+                        except ValueError:
+                            pass
+
+            # Second pass: best candidate without strict year matching
+            for item in candidates:
+                rate, i_id, g_list = check_candidate(item)
+                if rate is not None:
+                    return rate, i_id, g_list
+    except Exception:
+        pass
+
+    return None, None, []
 
 
 def fetch_poster_and_details(title: str, year: str = ''):

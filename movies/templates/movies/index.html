@@ -1,89 +1,183 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CineVerse - Movie Dashboard</title>
-  <meta name="description" content="Browse and discover movies from your collection">
+  <meta name="description" content="Browse, search, and discover movies from your local and network servers">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/movies/styles.css">
 </head>
+
 <body>
   <header class="site-header">
     <div class="header-content">
-      <h1 class="logo">🎬 CineVerse</h1>
-      <p class="subtitle">{{ total_count }} movies in your collection</p>
+      <div class="brand-area">
+        <h1 class="logo">🎬 CineVerse</h1>
+        <p class="subtitle">
+          <span id="resultsCount">{{ total_count }}</span> movies available
+          <span class="collection-stats">({{ unique_count }} unique &bull; {{ collection_count }} total files)</span>
+        </p>
+      </div>
+      <div class="header-actions">
+        <!-- Live Background Task Progress Pill -->
+        <div id="homeTaskStatusPill" class="task-status-pill home-task-pill" style="display:none;">
+          <span class="status-dot"></span>
+          <span id="homeTaskStatusText">Updating Metadata...</span>
+          <a href="/manage/?tab=console" class="pill-view-link" title="Open Live Studio Console">Console →</a>
+        </div>
+
+        <!-- 1-Click Fast Poster & Metadata Repair Button -->
+        <button id="btnQuickFixPosters" class="btn-quick-fix-header" type="button" onclick="triggerHeaderPosterFix()" title="Instantly search TMDB to populate all missing movie posters and metadata in the background">
+          <span class="fix-icon">⚡</span>
+          <span class="fix-text">Fix Missing Posters</span>
+          <span id="headerMissingBadge" class="badge-count">{{ missing_posters_count }}</span>
+        </button>
+
+        <a href="/manage/" class="btn-manage-link" title="Open Management &amp; Maintenance Studio">
+          <span class="manage-icon">⚙️</span> Management
+        </a>
+      </div>
     </div>
   </header>
 
   <main class="main">
     <!-- Search & Filter Panel -->
     <div class="filter-panel">
+      <!-- Search Row -->
       <div class="search-row">
         <div class="search-container">
-          <input 
-            id="searchBox" 
-            type="search" 
-            class="search-input"
-            placeholder="Search movies by title or year..." 
-            value="{{ query|default:'' }}"
-            autocomplete="off"
-          >
+          <input id="searchBox" type="search" class="search-input"
+            placeholder="Search movies by title, year, actor, or director..."
+            value="{{ query|default:'' }}" autocomplete="off">
           <span class="search-icon">🔍</span>
+          <button id="clearSearch" class="btn-clear-search" type="button" aria-label="Clear search" {% if not query %}hidden{% endif %}>✕</button>
         </div>
       </div>
-      
+
+      <!-- Filters Grid -->
       <div class="filter-row">
+        <!-- Language Filter -->
+        <div class="filter-group">
+          <label for="filterLanguage">Language</label>
+          <select id="filterLanguage" name="language" class="filter-select">
+            <option value="">All Languages</option>
+            {% for lang in language_options %}
+            <option value="{{ lang }}" {% if filters.language == lang %}selected{% endif %}>{{ lang }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Source / Server Filter -->
+        <div class="filter-group">
+          <label for="filterSource">Source</label>
+          <select id="filterSource" name="source" class="filter-select">
+            <option value="">All Sources</option>
+            {% for src in source_options %}
+            <option value="{{ src }}" {% if filters.source == src %}selected{% endif %}>{{ src }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Quality / Resolution Filter -->
+        <div class="filter-group">
+          <label for="filterResolution">Quality</label>
+          <select id="filterResolution" name="resolution" class="filter-select">
+            <option value="">All Qualities</option>
+            {% for val, label in resolution_options %}
+            <option value="{{ val }}" {% if filters.resolution == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Genre Filter -->
+        <div class="filter-group">
+          <label for="filterGenre">Genre</label>
+          <select id="filterGenre" name="genre" class="filter-select">
+            <option value="">All Genres</option>
+            {% for g in genre_options %}
+            <option value="{{ g }}" {% if filters.genres and g in filters.genres %}selected{% endif %}>{{ g }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Rating Filter -->
+        <div class="filter-group">
+          <label for="minRating">Rating</label>
+          <select id="minRating" name="min_rating" class="filter-select">
+            <option value="">Any Rating</option>
+            {% for val, label in rating_options %}
+            <option value="{{ val }}" {% if filters.min_rating == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Year Range -->
         <div class="filter-group">
           <label for="yearFrom">Year</label>
           <div class="filter-range">
             <select id="yearFrom" name="year_from" class="filter-select">
               <option value="">From</option>
               {% for y in years %}
-                <option value="{{ y }}" {% if filters.year_from == y|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
+              <option value="{{ y }}" {% if filters.year_from == y|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
               {% endfor %}
             </select>
             <span class="range-sep">–</span>
             <select id="yearTo" name="year_to" class="filter-select">
               <option value="">To</option>
               {% for y in years %}
-                <option value="{{ y }}" {% if filters.year_to == y|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
+              <option value="{{ y }}" {% if filters.year_to == y|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
               {% endfor %}
             </select>
           </div>
         </div>
-        
+
+        <!-- Sort -->
         <div class="filter-group">
-          <label for="minRating">Rating</label>
-          <select id="minRating" name="min_rating" class="filter-select">
-            <option value="">Any</option>
-            {% for val, label in rating_options %}
-              <option value="{{ val }}" {% if filters.min_rating == val %}selected{% endif %}>{{ label }}</option>
+          <label for="sortBy">Sort By</label>
+          <select id="sortBy" name="sort" class="filter-select">
+            {% for val, label in sort_options %}
+            <option value="{{ val }}" {% if filters.sort == val %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
         </div>
-        
+
+        <!-- Metadata Status -->
         <div class="filter-group">
           <label for="status">Status</label>
           <select id="status" name="status" class="filter-select">
             {% for val, label in status_options %}
-              <option value="{{ val }}" {% if filters.status == val %}selected{% endif %}>{{ label }}</option>
+            <option value="{{ val }}" {% if filters.status == val %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
         </div>
-        
+
+        <!-- Catalog Gaps Filter -->
         <div class="filter-group">
-          <label for="sortBy">Sort</label>
-          <select id="sortBy" name="sort" class="filter-select">
-            {% for val, label in sort_options %}
-              <option value="{{ val }}" {% if filters.sort == val %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
+          <label for="filterMissing">Catalog Gaps</label>
+          <select id="filterMissing" name="missing" class="filter-select">
+            <option value="">All Movies</option>
+            <option value="poster" {% if filters.missing == 'poster' %}selected{% endif %}>🖼️ Missing Posters ({{ missing_posters_count }})</option>
+            <option value="imdb" {% if filters.missing == 'imdb' %}selected{% endif %}>⭐ Missing IMDb</option>
+            <option value="genres" {% if filters.missing == 'genres' %}selected{% endif %}>🏷️ Missing Genres</option>
           </select>
         </div>
-        
-        <button id="clearFilters" class="btn-clear" type="button">Clear All</button>
+
+        <!-- Group Duplicates Toggle -->
+        <div class="filter-group toggle-group">
+          <label for="groupCopies" class="toggle-label" title="Group multiple server copies of the same movie into a single card">
+            <input type="checkbox" id="groupCopies" name="group" value="1" {% if filters.group != '0' %}checked{% endif %}>
+            <span>Group Copies</span>
+          </label>
+        </div>
+
+        <!-- Clear Button -->
+        <div class="filter-group action-group">
+          <button id="clearFilters" class="btn-clear" type="button" title="Reset all search filters">Clear All</button>
+        </div>
       </div>
     </div>
 
@@ -93,23 +187,9 @@
     </div>
 
     <!-- Pagination -->
-    {% if movies.has_other_pages %}
-    <nav class="pagination" aria-label="Movie pagination">
-      {% if movies.has_previous %}
-        <a href="?page=1{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}" class="page-link" aria-label="First">«</a>
-        <a href="?page={{ movies.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}" class="page-link" aria-label="Previous">‹</a>
-      {% endif %}
-      
-      <span class="page-info">
-        Page {{ movies.number }} of {{ movies.paginator.num_pages }}
-      </span>
-      
-      {% if movies.has_next %}
-        <a href="?page={{ movies.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}" class="page-link" aria-label="Next">›</a>
-        <a href="?page={{ movies.paginator.num_pages }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}" class="page-link" aria-label="Last">»</a>
-      {% endif %}
-    </nav>
-    {% endif %}
+    <div id="paginationContainer">
+      {% include 'movies/_pagination.html' %}
+    </div>
   </main>
 
   <!-- Movie Detail Modal -->
@@ -124,125 +204,652 @@
   </div>
 
   <script>
-  (function() {
-    const searchBox = document.getElementById('searchBox');
-    const yearFrom = document.getElementById('yearFrom');
-    const yearTo = document.getElementById('yearTo');
-    const minRating = document.getElementById('minRating');
-    const sortBy = document.getElementById('sortBy');
-    const status = document.getElementById('status');
-    const clearBtn = document.getElementById('clearFilters');
-    const grid = document.getElementById('movieGrid');
-    
-    let debounceTimer;
-    
-    function buildQueryString() {
-      const params = new URLSearchParams();
-      if (searchBox.value.trim()) params.set('q', searchBox.value.trim());
-      if (yearFrom.value) params.set('year_from', yearFrom.value);
-      if (yearTo.value) params.set('year_to', yearTo.value);
-      if (minRating.value) params.set('min_rating', minRating.value);
-      if (sortBy.value) params.set('sort', sortBy.value);
-      if (status.value) params.set('status', status.value);
-      return params.toString();
-    }
-    
-    function updateMovies() {
-      const qs = buildQueryString();
-      grid.classList.add('loading');
-      
-      fetch('/search_ajax/?' + qs)
-        .then(r => r.text())
-        .then(html => {
-          grid.innerHTML = html;
-          grid.classList.remove('loading');
-          // Update URL without reload
-          const newUrl = qs ? '?' + qs : window.location.pathname;
-          history.replaceState(null, '', newUrl);
-        })
-        .catch(err => {
-          console.error('Search error:', err);
-          grid.classList.remove('loading');
-        });
-    }
-    
-    function debounceUpdate() {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(updateMovies, 300);
-    }
-    
-    // Event listeners
-    searchBox.addEventListener('input', debounceUpdate);
-    [yearFrom, yearTo, minRating, sortBy, status].forEach(el => {
-      el.addEventListener('change', updateMovies);
-    });
-    
-    clearBtn.addEventListener('click', () => {
-      searchBox.value = '';
-      yearFrom.value = '';
-      yearTo.value = '';
-      minRating.value = '';
-      sortBy.value = 'popularity';
-      status.value = '';
-      updateMovies();
-    });
-    
-    // Modal functionality
-    const modal = document.getElementById('movieModal');
-    const modalBody = document.getElementById('modalBody');
-    const modalClose = modal.querySelector('.modal-close');
-    const modalBackdrop = modal.querySelector('.modal-backdrop');
-    
-    document.addEventListener('click', (e) => {
-      const card = e.target.closest('.card[data-movie-id]');
-      if (card && e.target.closest('.info-btn')) {
-        e.preventDefault();
-        const movieId = card.dataset.movieId;
-        showMovieDetails(movieId);
+    (function () {
+      const searchBox = document.getElementById('searchBox');
+      const clearSearchBtn = document.getElementById('clearSearch');
+      const yearFrom = document.getElementById('yearFrom');
+      const yearTo = document.getElementById('yearTo');
+      const minRating = document.getElementById('minRating');
+      const filterLanguage = document.getElementById('filterLanguage');
+      const filterSource = document.getElementById('filterSource');
+      const filterResolution = document.getElementById('filterResolution');
+      const filterGenre = document.getElementById('filterGenre');
+      const filterMissing = document.getElementById('filterMissing');
+      const sortBy = document.getElementById('sortBy');
+      const status = document.getElementById('status');
+      const groupCopies = document.getElementById('groupCopies');
+      const clearBtn = document.getElementById('clearFilters');
+      const grid = document.getElementById('movieGrid');
+      const paginationContainer = document.getElementById('paginationContainer');
+      const resultsCountEl = document.getElementById('resultsCount');
+
+      let debounceTimer = null;
+      let activeController = null;
+
+      function buildQueryString(extraParams) {
+        const params = new URLSearchParams();
+        const qVal = searchBox.value.trim();
+        if (qVal) params.set('q', qVal);
+        if (yearFrom.value) params.set('year_from', yearFrom.value);
+        if (yearTo.value) params.set('year_to', yearTo.value);
+        if (minRating.value) params.set('min_rating', minRating.value);
+        if (filterLanguage.value) params.set('language', filterLanguage.value);
+        if (filterSource.value) params.set('source', filterSource.value);
+        if (filterResolution.value) params.set('resolution', filterResolution.value);
+        if (filterGenre.value) params.set('genre', filterGenre.value);
+        if (filterMissing && filterMissing.value) params.set('missing', filterMissing.value);
+        if (sortBy.value) params.set('sort', sortBy.value);
+        if (status.value) params.set('status', status.value);
+        
+        // Grouping: default is 1, only set if unchecked (0)
+        if (!groupCopies.checked) {
+          params.set('group', '0');
+        }
+
+        if (extraParams) {
+          for (const [k, v] of Object.entries(extraParams)) {
+            if (v !== null && v !== undefined && v !== '') {
+              params.set(k, v);
+            }
+          }
+        }
+        return params.toString();
       }
-    });
-    
-    function showMovieDetails(movieId) {
-      modal.hidden = false;
-      modalBody.innerHTML = '<div class="loading-spinner"></div>';
-      document.body.style.overflow = 'hidden';
-      
-      fetch('/movie/' + movieId + '/detail/')
-        .then(r => r.json())
-        .then(data => {
-          if (data.success) {
-            modalBody.innerHTML = `
+
+      function fetchMovies(page, pushHistory = true) {
+        const extra = page ? { page: page } : {};
+        const qs = buildQueryString(extra);
+
+        // Toggle clear search button
+        if (clearSearchBtn) {
+          clearSearchBtn.hidden = !searchBox.value.trim();
+        }
+
+        // Cancel previous pending fetch
+        if (activeController) {
+          activeController.abort();
+        }
+        activeController = new AbortController();
+
+        grid.classList.add('loading');
+
+        fetch('/search_ajax/?' + qs, { signal: activeController.signal })
+          .then(r => {
+            if (!r.ok) throw new Error('Network error');
+            return r.json();
+          })
+          .then(data => {
+            grid.innerHTML = data.html;
+            paginationContainer.innerHTML = data.pagination_html;
+            grid.classList.remove('loading');
+
+            if (resultsCountEl) {
+              resultsCountEl.textContent = Number(data.count).toLocaleString();
+            }
+
+            // Sync URL in browser bar
+            const newUrl = qs ? '?' + qs : window.location.pathname;
+            if (pushHistory) {
+              history.pushState({ qs: qs, page: page }, '', newUrl);
+            } else {
+              history.replaceState({ qs: qs, page: page }, '', newUrl);
+            }
+
+            if (page) {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          })
+          .catch(err => {
+            if (err.name !== 'AbortError') {
+              console.error('Search error:', err);
+              grid.classList.remove('loading');
+            }
+          });
+      }
+
+      function updateMovies() {
+        fetchMovies(null, true);
+      }
+
+      function debounceUpdate() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(updateMovies, 280);
+      }
+
+      // Input and filter listeners
+      searchBox.addEventListener('input', debounceUpdate);
+      if (clearSearchBtn) {
+        clearSearchBtn.addEventListener('click', () => {
+          searchBox.value = '';
+          clearSearchBtn.hidden = true;
+          updateMovies();
+          searchBox.focus();
+        });
+      }
+
+      [yearFrom, yearTo, minRating, filterLanguage, filterSource, filterResolution, filterGenre, filterMissing, sortBy, status, groupCopies].forEach(el => {
+        if (el) el.addEventListener('change', updateMovies);
+      });
+
+      // Clear all filters
+      clearBtn.addEventListener('click', () => {
+        searchBox.value = '';
+        if (clearSearchBtn) clearSearchBtn.hidden = true;
+        yearFrom.value = '';
+        yearTo.value = '';
+        minRating.value = '';
+        filterLanguage.value = '';
+        filterSource.value = '';
+        filterResolution.value = '';
+        filterGenre.value = '';
+        if (filterMissing) filterMissing.value = '';
+        sortBy.value = 'popularity';
+        status.value = '';
+        groupCopies.checked = true;
+        updateMovies();
+      });
+
+      // Browser Back & Forward button handling (popstate)
+      window.addEventListener('popstate', (e) => {
+        const urlParams = new URLSearchParams(window.location.search);
+        searchBox.value = urlParams.get('q') || '';
+        yearFrom.value = urlParams.get('year_from') || '';
+        yearTo.value = urlParams.get('year_to') || '';
+        minRating.value = urlParams.get('min_rating') || '';
+        filterLanguage.value = urlParams.get('language') || '';
+        filterSource.value = urlParams.get('source') || '';
+        filterResolution.value = urlParams.get('resolution') || '';
+        filterGenre.value = urlParams.get('genre') || urlParams.get('genres') || '';
+        if (filterMissing) filterMissing.value = urlParams.get('missing') || '';
+        sortBy.value = urlParams.get('sort') || 'popularity';
+        status.value = urlParams.get('status') || '';
+        groupCopies.checked = urlParams.get('group') !== '0';
+
+        const page = urlParams.get('page');
+        fetchMovies(page, false);
+      });
+
+      // Intercept pagination clicks & jump button
+      paginationContainer.addEventListener('click', (e) => {
+        const link = e.target.closest('.page-link');
+        if (link && link.dataset.page) {
+          e.preventDefault();
+          fetchMovies(link.dataset.page, true);
+          return;
+        }
+
+        const jumpBtn = e.target.closest('.btn-page-jump');
+        if (jumpBtn) {
+          e.preventDefault();
+          const input = paginationContainer.querySelector('.page-jump-input');
+          if (input && input.value) {
+            const pageNum = parseInt(input.value, 10);
+            const maxPage = parseInt(input.getAttribute('max') || '99999', 10);
+            if (pageNum >= 1 && pageNum <= maxPage) {
+              fetchMovies(pageNum, true);
+            }
+          }
+        }
+      });
+
+      paginationContainer.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.target.classList.contains('page-jump-input')) {
+          e.preventDefault();
+          const pageNum = parseInt(e.target.value, 10);
+          const maxPage = parseInt(e.target.getAttribute('max') || '99999', 10);
+          if (pageNum >= 1 && pageNum <= maxPage) {
+            fetchMovies(pageNum, true);
+          }
+        }
+      });
+
+      // Movie Detail Modal
+      const modal = document.getElementById('movieModal');
+      const modalBody = document.getElementById('modalBody');
+      const modalClose = modal.querySelector('.modal-close');
+      const modalBackdrop = modal.querySelector('.modal-backdrop');
+
+      document.addEventListener('click', (e) => {
+        const card = e.target.closest('.card[data-movie-id]');
+        if (card && e.target.closest('.info-btn')) {
+          e.preventDefault();
+          const movieId = card.dataset.movieId;
+          showMovieDetails(movieId);
+        }
+      });
+
+      function showMovieDetails(movieId) {
+        modal.hidden = false;
+        modalBody.innerHTML = '<div class="loading-spinner"></div>';
+        document.body.style.overflow = 'hidden';
+
+        fetch('/movie/' + movieId + '/detail/')
+          .then(r => r.json())
+          .then(data => {
+            if (data.success) {
+              const runtimeStr = data.runtime ? `${Math.floor(data.runtime/60)}h ${data.runtime%60}m` : null;
+              const budgetStr = data.budget ? `$${(data.budget/1_000_000).toFixed(1)}M` : null;
+              const revenueStr = data.revenue ? `$${(data.revenue/1_000_000).toFixed(1)}M` : null;
+              const langStr = data.language || data.original_language?.toUpperCase() || null;
+
+              // Render available versions / copies
+              let copiesHtml = '';
+              if (data.copies && data.copies.length) {
+                copiesHtml = `
+                  <div class="detail-section detail-copies-section">
+                    <h3 class="detail-section-title">📀 Available Copies & Sources (${data.copies.length})</h3>
+                    <div class="modal-copies-list">
+                      ${data.copies.map(c => `
+                        <div class="modal-copy-card">
+                          <div class="copy-meta">
+                            <span class="copy-source-badge">${c.source}</span>
+                            <span class="copy-res-badge">${c.resolution || 'HD'}</span>
+                            ${c.quality ? `<span class="copy-quality-badge">${c.quality}</span>` : ''}
+                          </div>
+                          <a class="btn-play-copy" href="${c.file_url}" target="_blank" rel="noopener">
+                            ▶ Play / Stream
+                          </a>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>
+                `;
+              }
+
+              modalBody.innerHTML = `
               <div class="detail-content">
                 ${data.backdrop_url ? `<div class="detail-backdrop" style="background-image: url('${data.backdrop_url}')"></div>` : ''}
                 <div class="detail-info">
+                  <div class="detail-header">
+                    <div class="detail-header-row">
+                      <h2 class="detail-title">${data.title || 'Movie Details'} ${data.year ? `<span class="detail-year">(${data.year})</span>` : ''}</h2>
+                      <div class="modal-action-btns">
+                        <button id="btnModalRefetch" class="btn-modal-refetch" type="button" onclick="quickFetchModalMovie(${data.id || movieId})" title="Search TMDB to fetch/refresh poster, overview, cast, director, and authentic IMDb rating">
+                          <span class="btn-icon">🔄</span> Refresh Metadata
+                        </button>
+                        <button class="btn-modal-edit-toggle" type="button" onclick="toggleModalEditStrip()" title="Correct year or IMDb ID if mislabeled">
+                          ✏️ Edit Year / ID
+                        </button>
+                      </div>
+                    </div>
+                    <div id="modalEditStrip" class="modal-edit-strip" style="display:none;">
+                      <div class="edit-strip-row">
+                        <div class="edit-strip-field">
+                          <label for="modalEditYear">Release Year</label>
+                          <input id="modalEditYear" type="number" min="1900" max="2035" value="${data.year || ''}" placeholder="e.g. 2018">
+                        </div>
+                        <div class="edit-strip-field">
+                          <label for="modalEditImdbId">IMDb ID (tt...)</label>
+                          <input id="modalEditImdbId" type="text" value="${data.imdb_id || ''}" placeholder="e.g. tt5104604">
+                        </div>
+                        <div class="edit-strip-buttons">
+                          <button class="btn-strip-save" type="button" onclick="saveModalQuickEdit(${data.id || movieId})">💾 Save &amp; Refetch</button>
+                          <button class="btn-strip-cancel" type="button" onclick="toggleModalEditStrip()">Cancel</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   ${data.tagline ? `<p class="tagline">"${data.tagline}"</p>` : ''}
                   ${data.genres?.length ? `<div class="genres">${data.genres.map(g => `<span class="genre-tag">${g}</span>`).join('')}</div>` : ''}
-                  ${data.runtime ? `<p class="runtime">🕐 ${data.runtime} min</p>` : ''}
+
+                  ${(data.imdb_rating || data.vote_count || runtimeStr) ? `
+                  <div class="detail-stats-bar">
+                    ${data.imdb_rating ? `<span class="detail-stat-chip imdb-rating-chip"><strong class="imdb-chip-tag">IMDb</strong> ⭐ ${data.imdb_rating.toFixed(1)}</span>` : ''}
+                    ${data.vote_count ? `<span class="detail-stat-chip">👍 ${data.vote_count.toLocaleString()} votes</span>` : ''}
+                    ${runtimeStr ? `<span class="detail-stat-chip">🕐 ${runtimeStr}</span>` : ''}
+                    ${data.popularity ? `<span class="detail-stat-chip">🔥 ${data.popularity.toFixed(0)}</span>` : ''}
+                  </div>` : ''}
+
+                  ${copiesHtml}
+
+                  ${data.director?.name ? `
+                  <div class="detail-director">
+                    ${data.director.profile_path ? `<img class="director-photo" src="${data.director.profile_path}" alt="${data.director.name}">` : '<div class="director-photo placeholder-photo">🎬</div>'}
+                    <div class="director-text">
+                      <span class="detail-label">Director</span>
+                      <span class="director-name">${data.director.name}</span>
+                    </div>
+                  </div>` : ''}
+
+                  ${data.cast?.length ? `
+                  <div class="detail-section">
+                    <h3 class="detail-section-title">Cast</h3>
+                    <div class="cast-grid">
+                      ${data.cast.map(c => `
+                        <a class="cast-card" href="https://www.google.com/search?q=${encodeURIComponent(c.name + ' actor')}" target="_blank" rel="noopener">
+                          ${c.profile_path ? `<img class="cast-photo" src="${c.profile_path}" alt="${c.name}">` : '<div class="cast-photo placeholder-photo">👤</div>'}
+                          <div class="cast-info">
+                            <span class="cast-name">${c.name}</span>
+                            ${c.character ? `<span class="cast-character">${c.character}</span>` : ''}
+                          </div>
+                        </a>
+                      `).join('')}
+                    </div>
+                  </div>` : ''}
+
                   ${data.overview ? `<p class="overview">${data.overview}</p>` : ''}
-                  ${data.production_companies?.length ? `<p class="production">🎬 ${data.production_companies.slice(0,3).join(', ')}</p>` : ''}
+
+                  ${(data.release_date || langStr || budgetStr || revenueStr) ? `
+                  <div class="detail-meta-grid">
+                    ${data.release_date ? `<div class="meta-item"><span class="detail-label">📅 Release</span><span class="meta-value">${new Date(data.release_date).toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'})}</span></div>` : ''}
+                    ${langStr ? `<div class="meta-item"><span class="detail-label">🌐 Language</span><span class="meta-value">${langStr}</span></div>` : ''}
+                    ${budgetStr ? `<div class="meta-item"><span class="detail-label">💰 Budget</span><span class="meta-value">${budgetStr}</span></div>` : ''}
+                    ${revenueStr ? `<div class="meta-item"><span class="detail-label">💵 Revenue</span><span class="meta-value">${revenueStr}</span></div>` : ''}
+                  </div>` : ''}
+
+                  ${data.imdb_id ? `<a class="imdb-link" href="https://www.imdb.com/title/${data.imdb_id}/" target="_blank" rel="noopener">View on IMDb ↗</a>` : ''}
+
+                  ${data.production_companies?.length ? `<p class="production">🎬 ${data.production_companies.slice(0, 3).join(', ')}</p>` : ''}
                 </div>
               </div>
             `;
+            } else {
+              modalBody.innerHTML = '<p class="error">Could not load movie details</p>';
+            }
+          })
+          .catch(() => {
+            modalBody.innerHTML = '<p class="error">Error loading details</p>';
+          });
+      }
+
+      function closeModal() {
+        modal.hidden = true;
+        document.body.style.overflow = '';
+      }
+
+      modalClose.addEventListener('click', closeModal);
+      modalBackdrop.addEventListener('click', closeModal);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.hidden) closeModal();
+      });
+      window.showMovieDetails = showMovieDetails;
+      window.fetchMovies = fetchMovies;
+
+      // Toast notification helper
+      window.showToast = function(message, type = 'info') {
+        let container = document.getElementById('toastContainer');
+        if (!container) {
+          container = document.createElement('div');
+          container.id = 'toastContainer';
+          container.className = 'toast-container';
+          document.body.appendChild(container);
+        }
+        const toast = document.createElement('div');
+        toast.className = `toast-msg-box toast-${type}`;
+        toast.innerHTML = `<span>${message}</span>`;
+        container.appendChild(toast);
+        setTimeout(() => {
+          toast.classList.add('toast-fade-out');
+          setTimeout(() => toast.remove(), 400);
+        }, 4000);
+      };
+
+      // 1-Click Fast Card Poster Fetch
+      window.quickFetchCardPoster = function(btn, movieId) {
+        if (!movieId || movieId === 'undefined') {
+          window.showToast('Invalid movie ID', 'error');
+          return;
+        }
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="fetch-spinner-sm"></span> Finding...';
+
+        fetch('/manage/api/movie/' + movieId + '/action/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'refresh' })
+        })
+        .then(r => {
+          if (!r.ok) throw new Error('Server returned ' + r.status);
+          return r.json();
+        })
+        .then(data => {
+          if (data.success && data.movie && data.movie.poster_url) {
+            btn.innerHTML = '✓ Found!';
+            const card = btn.closest('.card');
+            if (card) {
+              const posterWrap = card.querySelector('.poster');
+              if (posterWrap) {
+                const noPoster = posterWrap.querySelector('.no-poster');
+                if (noPoster) {
+                  const img = document.createElement('img');
+                  img.src = data.movie.poster_url;
+                  img.alt = (data.movie.title || 'Movie') + ' poster';
+                  img.loading = 'lazy';
+                  img.className = 'fade-in-poster';
+                  posterWrap.replaceChild(img, noPoster);
+                }
+                if (data.movie.imdb_rating) {
+                  let ratingBadge = posterWrap.querySelector('.imdb-rating-badge');
+                  if (ratingBadge) {
+                    ratingBadge.innerHTML = `<span class="star-icon">★</span> ${data.movie.imdb_rating.toFixed(1)}`;
+                  } else {
+                    const badgeWrap = document.createElement('div');
+                    badgeWrap.className = 'poster-badges top-right';
+                    badgeWrap.innerHTML = `<span class="badge imdb-rating-badge" title="IMDb: ${data.movie.imdb_rating.toFixed(1)}"><span class="star-icon">★</span> ${data.movie.imdb_rating.toFixed(1)}</span>`;
+                    posterWrap.appendChild(badgeWrap);
+                  }
+                }
+              }
+            }
+            window.showToast('✓ Poster & metadata updated for ' + (data.movie.title || 'movie') + '!', 'success');
+            const badge = document.getElementById('headerMissingBadge');
+            if (badge) {
+              let count = parseInt(badge.textContent, 10);
+              if (!isNaN(count) && count > 0) badge.textContent = count - 1;
+            }
           } else {
-            modalBody.innerHTML = '<p class="error">Could not load movie details</p>';
+            btn.innerHTML = '❌ Not Found';
+            setTimeout(() => {
+              btn.disabled = false;
+              btn.innerHTML = originalHtml;
+            }, 2500);
+            window.showToast('No matching TMDB poster found for this movie.', 'warning');
           }
         })
-        .catch(() => {
-          modalBody.innerHTML = '<p class="error">Error loading details</p>';
+        .catch(err => {
+          btn.disabled = false;
+          btn.innerHTML = '⚠️ Error';
+          setTimeout(() => { btn.innerHTML = originalHtml; }, 2000);
+          window.showToast('Error querying TMDB: ' + err.message, 'error');
         });
-    }
-    
-    function closeModal() {
-      modal.hidden = true;
-      document.body.style.overflow = '';
-    }
-    
-    modalClose.addEventListener('click', closeModal);
-    modalBackdrop.addEventListener('click', closeModal);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !modal.hidden) closeModal();
-    });
-  })();
+      };
+
+      // 1-Click Fast Modal Movie Refetch
+      window.quickFetchModalMovie = function(movieId) {
+        if (!movieId || movieId === 'undefined') {
+          window.showToast('Cannot refresh: Movie ID is missing', 'error');
+          return;
+        }
+        const btn = document.getElementById('btnModalRefetch');
+        if (btn) {
+          btn.disabled = true;
+          btn.innerHTML = '<span class="fetch-spinner-sm"></span> Searching TMDB &amp; IMDb...';
+        }
+
+        fetch('/manage/api/movie/' + movieId + '/action/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'refresh' })
+        })
+        .then(r => {
+          if (!r.ok) throw new Error('Server returned ' + r.status);
+          return r.json();
+        })
+        .then(data => {
+          if (data.success) {
+            window.showToast('✅ Metadata & artwork updated successfully!', 'success');
+            showMovieDetails(movieId);
+
+            // Also update the card on the page grid
+            const card = document.querySelector(`.card[data-movie-id="${movieId}"]`);
+            if (card && data.movie && data.movie.poster_url) {
+              const posterWrap = card.querySelector('.poster');
+              const noPoster = posterWrap ? posterWrap.querySelector('.no-poster') : null;
+              if (noPoster) {
+                const img = document.createElement('img');
+                img.src = data.movie.poster_url;
+                img.className = 'fade-in-poster';
+                posterWrap.replaceChild(img, noPoster);
+              }
+              if (data.movie.imdb_rating) {
+                let badge = card.querySelector('.imdb-rating-badge');
+                if (badge) {
+                  badge.innerHTML = `<span class="star-icon">★</span> ${data.movie.imdb_rating.toFixed(1)}`;
+                }
+              }
+            }
+          } else {
+            if (btn) {
+              btn.disabled = false;
+              btn.innerHTML = '❌ Not Found on TMDB';
+              setTimeout(() => {
+                btn.innerHTML = '<span class="btn-icon">🔄</span> Fetch / Refresh TMDB Metadata';
+              }, 2500);
+            }
+            window.showToast(data.message || 'Could not find movie on TMDB', 'warning');
+          }
+        })
+        .catch(err => {
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<span class="btn-icon">🔄</span> Retry Refresh';
+          }
+          window.showToast('Error refreshing metadata: ' + err.message, 'error');
+        });
+      };
+
+      // Modal Quick Edit (Year / IMDb ID)
+      window.toggleModalEditStrip = function() {
+        const strip = document.getElementById('modalEditStrip');
+        if (strip) {
+          strip.style.display = strip.style.display === 'none' ? 'block' : 'none';
+        }
+      };
+
+      window.saveModalQuickEdit = function(movieId) {
+        const yVal = document.getElementById('modalEditYear').value.trim();
+        const idVal = document.getElementById('modalEditImdbId').value.trim();
+        const btn = document.querySelector('.btn-strip-save');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Saving...';
+        }
+
+        fetch('/manage/api/movie/' + movieId + '/action/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update_ids',
+            year: yVal ? parseInt(yVal, 10) : null,
+            imdb_id: idVal,
+            refetch: true
+          })
+        })
+        .then(r => {
+          if (!r.ok) throw new Error('Server returned ' + r.status);
+          return r.json();
+        })
+        .then(res => {
+          if (res.success) {
+            window.showToast('✅ Movie year and IMDb ID updated!', 'success');
+            showMovieDetails(movieId);
+            fetchMovies(null, false);
+          } else {
+            alert('Update error: ' + res.message);
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = '💾 Save & Refetch';
+            }
+          }
+        })
+        .catch(err => {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = '💾 Save & Refetch';
+          }
+          window.showToast('Error saving: ' + err.message, 'error');
+        });
+      };
+
+      // 1-Click Header Background Poster Fix
+      window.triggerHeaderPosterFix = function() {
+        if (!confirm('Start background task to fetch all missing posters and metadata using 12 worker threads?')) {
+          return;
+        }
+        const btn = document.getElementById('btnQuickFixPosters');
+        if (btn) btn.disabled = true;
+
+        fetch('/manage/api/task/start/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            task_type: 'fetch_posters',
+            params: { limit: null, workers: 12, include_details: true, force: false }
+          })
+        })
+        .then(r => r.json())
+        .then(res => {
+          if (res.success) {
+            window.showToast('🚀 Started background poster fetch! Progress will update in header.', 'success');
+            pollHomeTaskStatus();
+          } else {
+            window.showToast('Could not start task: ' + res.message, 'warning');
+            if (btn) btn.disabled = false;
+          }
+        })
+        .catch(err => {
+          window.showToast('Network error: ' + err, 'error');
+          if (btn) btn.disabled = false;
+        });
+      };
+
+      // Poll background task status from homepage
+      let homePollTimer = null;
+      function pollHomeTaskStatus() {
+        fetch('/manage/api/task/status/')
+          .then(r => r.json())
+          .then(data => {
+            const pill = document.getElementById('homeTaskStatusPill');
+            const text = document.getElementById('homeTaskStatusText');
+            const fixBtn = document.getElementById('btnQuickFixPosters');
+            if (!pill || !text) return;
+
+            if (data.status === 'running') {
+              pill.style.display = 'inline-flex';
+              pill.classList.add('running');
+              text.textContent = `Fixing Posters: ${data.progress_percent.toFixed(0)}% (${data.progress_current}/${data.progress_total})`;
+              if (fixBtn) fixBtn.style.display = 'none';
+
+              if (!homePollTimer) {
+                homePollTimer = setInterval(pollHomeTaskStatus, 2000);
+              }
+            } else {
+              if (homePollTimer) {
+                clearInterval(homePollTimer);
+                homePollTimer = null;
+              }
+              if (data.status === 'completed' && pill.classList.contains('running')) {
+                pill.classList.remove('running');
+                text.textContent = 'Posters Repaired!';
+                window.showToast('✅ Missing posters and metadata update finished!', 'success');
+                setTimeout(() => {
+                  pill.style.display = 'none';
+                  if (fixBtn) fixBtn.style.display = 'inline-flex';
+                }, 6000);
+                fetchMovies(null, false);
+              } else {
+                pill.style.display = 'none';
+                if (fixBtn) fixBtn.style.display = 'inline-flex';
+              }
+            }
+          })
+          .catch(() => {});
+      }
+      pollHomeTaskStatus();
+    })();
   </script>
 </body>
+
 </html>

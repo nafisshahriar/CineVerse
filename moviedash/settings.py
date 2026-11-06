@@ -47,6 +47,15 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        'OPTIONS': {
+            'init_command': (
+                'PRAGMA journal_mode=WAL;'
+                'PRAGMA synchronous=NORMAL;'
+                'PRAGMA busy_timeout=15000;'
+                'PRAGMA cache_size=-64000;'
+            ),
+            'transaction_mode': 'IMMEDIATE',
+        },
     }
 }
 AUTH_PASSWORD_VALIDATORS = []

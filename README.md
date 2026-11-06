@@ -1,301 +1,229 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Django-4.2+-092E20?style=for-the-badge&logo=django&logoColor=white" alt="Django">
-  <img src="https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/TMDB-API-01B4E4?style=for-the-badge&logo=themoviedatabase&logoColor=white" alt="TMDB">
-  <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/Django-5.0+-092E20?style=for-the-badge&logo=django&logoColor=white" alt="Django">
+  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/TMDB-API%20v3-01B4E4?style=for-the-badge&logo=themoviedatabase&logoColor=white" alt="TMDB">
+  <img src="https://img.shields.io/badge/IMDb-Ratings%20Sync-F5C518?style=for-the-badge&logo=imdb&logoColor=black" alt="IMDb">
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/License-MIT-emerald?style=for-the-badge" alt="License">
 </p>
 
 # 🎬 CineVerse
 
-A feature-rich **Movie Dashboard** built with Django that crawls movie files from H5AI directory listings and enriches them with metadata from TMDB (The Movie Database).
+> **Self-Hosted Cinema Streaming Frontend & Catalog Management Studio for Private Networks, Home Labs, NAS, and H5AI Directory Listings.**
 
-![Dashboard Preview](https://via.placeholder.com/800x400?text=CineVerse+Dashboard)
-
----
-
-## ✨ Features
-
-- **🔍 Smart Search** — Real-time AJAX-powered search with live filtering
-- **📊 Rich Metadata** — Automatically fetches posters, ratings, cast, directors, and more from TMDB
-- **🎭 Multi-Genre Filtering** — Filter movies by multiple genres simultaneously
-- **📅 Year & Rating Filters** — Narrow down by release year or rating range
-- **🔄 Automatic Crawling** — Crawl H5AI directories for movie files
-- **📱 Responsive Design** — Beautiful dark-themed UI that works on all devices
-- **🔗 Direct Play Links** — Click to stream directly from your media server
+Turn raw folder indexes and private network storage into a modern, cinematic personal streaming web application. CineVerse crawls your local or remote H5AI/HTTP directory listings, parses scene release file names, enriches them with high-definition TMDB metadata, syncs authentic IMDb ratings, groups duplicate copies across servers, and provides a powerful web management studio.
 
 ---
 
-## 📋 Table of Contents
+## 🌟 Why CineVerse?
 
-- [Prerequisites](#prerequisites)
-- [Quick Start](#-quick-start)
-- [Environment Variables](#-environment-variables)
-- [Management Commands](#-management-commands)
-- [Deployment](#-deployment)
-  - [Railway](#railway)
-  - [Raspberry Pi](#raspberry-pi)
-- [Project Structure](#-project-structure)
-- [API Reference](#-api-reference)
-- [Contributing](#-contributing)
-- [License](#-license)
+If you maintain a home media collection, run a NAS, use a local seedbox, or access community FTP/H5AI servers over local ISP/BDIX networks, browsing raw file lists in a browser is clunky and uninspiring:
+
+- ❌ Bare folder listings with cryptic filenames (`Inception.2010.1080p.BluRay.x264-SPARKS.mkv`)
+- ❌ No posters, backdrops, plot summaries, genres, or cast info
+- ❌ No search, filtering by genre, resolution, or authentic IMDb rating
+- ❌ Cluttered duplicate files across multiple storage servers
+
+**CineVerse solves this completely:**
+- ✨ **Netflix-grade Obsidian Dark Cinema UI** with high-resolution posters, backdrops, cast galleries, and direct in-browser streaming links.
+- ⚡ **Multi-Pass Matching Engine** that accurately parses release filenames and bonds canonical TMDB metadata and IMDb ratings (`tt...`).
+- 🛠️ **Dedicated Web Management Studio (`/manage/`)** to monitor catalog health, run background crawlers with live streaming terminal logs, and perform 1-click single-movie metadata repairs.
+- 📀 **Multi-Source Copy Deduplication** that bundles duplicates across servers into 1 sleek movie card with a copy picker.
 
 ---
 
-## Prerequisites
+## ✨ Feature Highlights
 
-- Python 3.9+
-- pip (Python package manager)
-- [TMDB API Key](https://www.themoviedb.org/settings/api) (free)
+| Feature | Description |
+|---|---|
+| **🛠️ Management Studio (`/manage/`)** | Web dashboard to trigger background syncs, monitor task progress with live percentage/ETA, inspect catalog health, and repair single-movie metadata on the fly. |
+| **⭐ Authentic IMDb Ratings** | Uses canonical IMDb ID resolution and Cinemeta synchronization. Eliminates 1-vote 10.0 biases so "Highest Rated" reflects true world cinema classics. |
+| **🎯 Multi-Pass TMDB Engine** | 4-pass search heuristic featuring adjacent-year (`±1`) tolerance for film festivals vs. theatrical releases, scene tag sanitization, and candidate proximity sorting. |
+| **📀 Copy Deduplication** | Automatically groups duplicate releases (1080p, 4K, multiple FTP servers) into 1 card with a copy switcher and direct playback URLs in the detail modal. |
+| **🎨 Obsidian Dark Cinema UI** | Sleek charcoal glassmorphic surfaces, sapphire accents, warm star badges, and keyboard navigation. |
+| **⚡ Sustainable Metrics** | Supports TMDB Changes API to refresh only recently modified titles, saving over 95% of API quota calls. |
+| **🔍 Real-Time Filter & Search** | Instant AJAX searching across titles, actors, directors; filter by language, server source, resolution (4K/1080p/720p), genre, and rating. |
+| **🔢 Smart Pagination** | Windowed page navigation (`1 ... 14, 15, 16 ... 374`) with instant "Jump to Page" input and browser history (`popstate`) preservation. |
+| **🐳 Docker & Compose** | Pre-configured container setup for 1-command deployment on Unraid, TrueNAS, Portainer, or Raspberry Pi. |
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Clone the Repository
+### Option A: Local Development Setup
+
+#### 1. Clone & Setup Environment
 
 ```bash
-git clone https://github.com/yourusername/CineVerse.git
+git clone https://github.com/nafisshahriar/CineVerse.git
 cd CineVerse
-```
 
-### 2. Create a Virtual Environment
-
-```bash
+# Create and activate virtual environment
 python -m venv .venv
 
 # Windows
 .venv\Scripts\activate
 
-# Linux/macOS
+# Linux / macOS
 source .venv/bin/activate
 ```
 
-### 3. Install Dependencies
+#### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Configure Environment Variables
+#### 3. Configure Environment Variables
 
-Create a `.env` file in the project root:
+Copy the example configuration:
 
-```env
-DJANGO_SECRET_KEY=your-super-secret-key-here
-DJANGO_DEBUG=True
-TMDB_API_KEY=your-tmdb-api-key
-H5AI_BASE_URL=https://your-h5ai-server.com/files/
+```bash
+cp .env.example .env
 ```
 
-### 5. Run Migrations
+Edit `.env` and fill in your keys:
+
+```env
+DJANGO_SECRET_KEY=your-random-secret-key-here
+DJANGO_DEBUG=True
+TMDB_API_KEY=your_tmdb_api_key_here
+H5AI_BASE_URL=http://your-local-media-server/movies/
+```
+*(You can get a free TMDB API key in 2 minutes at [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api))*
+
+#### 4. Run Migrations & Start Server
 
 ```bash
 python manage.py migrate
-```
-
-### 6. Start the Development Server
-
-```bash
 python manage.py runserver
 ```
 
-Visit `http://127.0.0.1:8000` in your browser! 🎉
+Open your browser at `http://127.0.0.1:8000/` to browse the catalog, or `http://127.0.0.1:8000/manage/` to access the Management Studio.
 
 ---
 
-## 🔐 Environment Variables
+### Option B: Docker Compose (Recommended for Home Labs & NAS)
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `DJANGO_SECRET_KEY` | Django secret key for cryptographic signing | ✅ |
-| `DJANGO_DEBUG` | Enable debug mode (`True`/`False`) | ❌ (default: `True`) |
-| `DJANGO_ALLOWED_HOSTS` | Comma-separated list of allowed hosts | ❌ (required if DEBUG=False) |
-| `TMDB_API_KEY` | Your TMDB API key for metadata fetching | ✅ |
-| `H5AI_BASE_URL` | Base URL of your H5AI media server | ❌ |
+Run CineVerse in an isolated container with persistent database storage:
+
+```bash
+docker compose up -d
+```
+
+Access the dashboard at `http://localhost:8000`.
 
 ---
 
-## 🛠 Management Commands
+## 🌐 How to Deploy for Free (Accessing Private / Local Media Remotely)
 
-CineVerse includes several custom Django management commands:
+A common challenge for home lab and local media enthusiasts: **media files are downloaded locally or hosted on private IPs (e.g., LAN, local FTP, or torrent storage on `172.16.x.x`), which cannot be accessed directly from public cloud hosts.**
 
-### Crawl H5AI Directory
+Here are the best **100% free, production-tested architectures** to solve this:
 
-Scan your H5AI server for movie files:
+### Strategy 1: Cloudflare Tunnel (Zero-Cost, Remote Access, Zero Port Forwarding) ⭐ *Recommended*
 
-```bash
-python manage.py crawl_h5ai --url "https://your-h5ai/files/"
-```
+Run CineVerse locally on your PC, Home Server, or Raspberry Pi alongside your media storage, and expose it securely to the internet using **Cloudflare Tunnel (`cloudflared`)**:
 
-### Fetch Movie Credits
+1. Sign up for a free [Cloudflare](https://cloudflare.com) account (you can use any free or custom domain).
+2. Install `cloudflared` on your local host:
+   ```bash
+   # Windows (via winget)
+   winget install Cloudflare.cloudflared
 
-Fetch cast and director information for movies:
-
-```bash
-python manage.py fetch_credits
-```
-
-### Refresh Metadata
-
-Update ratings, popularity, and vote counts from TMDB:
-
-```bash
-# Refresh all fetched movies
-python manage.py refresh_metadata --all
-
-# Refresh a specific movie
-python manage.py refresh_metadata --movie-id 123
-
-# Limit the number of movies to process
-python manage.py refresh_metadata --limit 50
-```
-
-### Report Missing Metadata
-
-Generate a report of movies missing metadata:
-
-```bash
-python manage.py report_missing
-```
+   # Linux / Raspberry Pi
+   sudo apt-get install cloudflared
+   ```
+3. Start an instant public HTTPS tunnel without opening router ports:
+   ```bash
+   cloudflared tunnel --url http://localhost:8000
+   ```
+4. Cloudflare gives you a secure, free public URL (e.g., `https://random-words.trycloudflare.com` or your own custom domain like `https://movies.yourdomain.com`).
+5. **Why this works:** CineVerse and your media files remain inside your local network. The Cloudflare Tunnel securely forwards web requests and media streams over an encrypted outbound connection. You can watch your local movies from your phone, office, or anywhere in the world completely free!
 
 ---
 
-## 🚢 Deployment
+### Strategy 2: Tailscale Mesh VPN (Free Private Access for You & Friends)
 
-### Railway
+If you only want access for yourself and select family members without exposing anything publicly:
 
-1. Push your code to GitHub
-2. Connect your repo to [Railway](https://railway.app)
-3. Add environment variables in Railway dashboard
-4. Railway auto-detects the `Procfile` and deploys!
-
-**Required files for Railway deployment:**
-- `requirements.txt` — Python dependencies (includes `gunicorn`)
-- `Procfile` — Startup command: `web: gunicorn moviedash.wsgi --log-file -`
+1. Install [Tailscale](https://tailscale.com/) on your local server and on your phone/laptop (free for up to 3 users / 100 devices).
+2. Your server receives a 100% private, encrypted IP (e.g., `100.x.y.z`).
+3. Connect anywhere using the Tailscale app, open `http://100.x.y.z:8000`, and stream your media at direct peer-to-peer speeds.
 
 ---
 
-### Raspberry Pi
+### Strategy 3: Free Cloud Hosting (Catalog & Discovery Portal)
 
-Deploy CineVerse on a Raspberry Pi for a self-hosted movie dashboard.
+If you wish to host the web interface in the cloud (e.g. for a community movie catalog, watchlist, or remote WebDAV/FTP streams):
 
-#### Auto-Start on Boot
+- **[Render.com](https://render.com/)**: Free Web Service tier (750 free hours/month). Connect your GitHub repository, choose Python environment, and start with `gunicorn moviedash.wsgi`.
+- **[Fly.io](https://fly.io/)**: Free allowance running the included `Dockerfile`.
+- **[Oracle Cloud Always Free Tier](https://www.oracle.com/cloud/free/)**: Provides a free VPS with 4 ARM cores, 24GB RAM, and 200GB storage forever — easily hosts CineVerse, Docker, and `cloudflared`.
 
-1. **Copy deployment files** (included in `pi_deployment/`):
-   - `cineverse_startup.sh` — Startup script
-   - `cineverse.service` — Systemd service file
+---
 
-2. **Make the startup script executable:**
+## 🛠️ Management Commands
 
-```bash
-chmod +x ~/movie_verse2/CineVerse/pi_deployment/cineverse_startup.sh
-```
-
-3. **Enable the systemd service:**
+CineVerse provides robust CLI commands for headless operation, cron jobs, and automation:
 
 ```bash
-sudo ln -s ~/movie_verse2/CineVerse/pi_deployment/cineverse.service /etc/systemd/system/cineverse.service
-sudo systemctl daemon-reload
-sudo systemctl enable cineverse.service
-sudo systemctl start cineverse.service
-```
+# 1. Full Pipeline: Crawl directory, enrich TMDB metadata, fetch credits
+python manage.py update_all --url "http://your-server/movies/"
 
-4. **Check status:**
+# 2. Sync Authentic IMDb Ratings (Concurrent Multi-Threaded)
+python manage.py fetch_imdb_ratings --all --workers 16
 
-```bash
-sudo systemctl status cineverse.service
-```
+# 3. Backfill and Normalize Genres across all titles
+python manage.py fetch_genres --all --workers 16
 
-#### Security Recommendations
+# 4. Sustainable Refresh (TMDB Changes API - saves 95%+ calls)
+python manage.py refresh_metadata --changes --days 7
 
-When exposing your Pi to the internet:
-
-```bash
-# Install and configure firewall
-sudo apt install ufw
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow ssh
-sudo ufw allow 8000/tcp
-sudo ufw enable
-
-# Install fail2ban for brute-force protection
-sudo apt install fail2ban
-sudo systemctl enable fail2ban
+# 5. Backfill Clean Titles, Resolutions, and Server Deduplication Keys
+python manage.py backfill_metadata
 ```
 
 ---
 
-## 📁 Project Structure
+## 📁 Project Architecture
 
 ```
 CineVerse/
-├── movies/                    # Main Django app
-│   ├── management/commands/   # Custom management commands
-│   │   ├── crawl_h5ai.py     # H5AI directory crawler
-│   │   ├── fetch_credits.py  # Fetch cast/director info
-│   │   ├── refresh_metadata.py # Update TMDB data
-│   │   └── report_missing.py # Missing metadata report
-│   ├── models.py             # Database models
-│   ├── views.py              # View controllers
-│   ├── services.py           # TMDB API service
-│   └── utils.py              # Utility functions
-├── moviedash/                 # Django project settings
-│   ├── settings.py           # Configuration
-│   ├── urls.py               # URL routing
-│   └── wsgi.py               # WSGI entry point
-├── templates/                 # HTML templates
-├── static/                    # Static assets (CSS, JS)
-├── pi_deployment/             # Raspberry Pi deployment files
-├── requirements.txt           # Python dependencies
-├── Procfile                   # Railway/Heroku process file
-└── manage.py                  # Django CLI
+├── moviedash/                  # Django project root
+│   ├── settings.py             # Optimized settings (WAL mode, timeouts, cache)
+│   ├── urls.py                 # Core routing
+│   └── wsgi.py                 # WSGI application entry
+├── movies/                     # Main cinema application
+│   ├── models.py               # Movie, MovieDetail, CrawledDirectory models
+│   ├── views.py                # AJAX search, details, and Management API
+│   ├── services.py             # TMDB API multi-pass engine & Cinemeta resolver
+│   ├── task_runner.py          # Asynchronous background job engine with live ETA
+│   ├── utils.py                # Regex scene parsers and H5AI directory crawler
+│   ├── management/commands/    # CLI management commands (update_all, etc.)
+│   └── templates/movies/       # Glassmorphic templates (index.html, manage.html)
+├── static/movies/              # Production CSS & UI styling
+├── pi_deployment/              # Raspberry Pi systemd startup scripts
+├── Dockerfile                  # Container build recipe
+├── docker-compose.yml          # Container orchestration recipe
+├── requirements.txt            # Python dependencies
+├── Procfile                    # Cloud platform entrypoint (Gunicorn)
+└── LICENSE                     # MIT Open Source License
 ```
 
 ---
 
-## 📡 API Reference
+## ⚖️ Legal Disclaimer
 
-### Endpoints
+CineVerse is an open-source personal media catalog organizer and web presentation layer (similar to Kodi, Jellyfin, or Radarr).
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Main dashboard with movie grid |
-| `/search/` | GET | AJAX search endpoint |
-| `/movie/<id>/` | GET | AJAX movie detail modal data |
-
-### Query Parameters (Search)
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `q` | string | Search query (title) |
-| `year_min` | int | Minimum release year |
-| `year_max` | int | Maximum release year |
-| `rating_min` | float | Minimum rating (0-10) |
-| `genre` | string[] | Genre filter (multiple allowed) |
-| `sort` | string | Sort field (`title`, `year`, `rating`, `popularity`) |
-| `page` | int | Page number |
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+- **No Media Hosting:** CineVerse does **not** host, store, index, scrape, or distribute any video files, torrents, or pirated media.
+- **User Ownership:** All media stream links are strictly defined by the user through their own privately configured directory listings or local network servers.
+- **Metadata Sources:** Metadata and posters are retrieved via third-party APIs (The Movie Database TMDB and Cinemeta/IMDb) in compliance with their respective developer terms.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
----
-
-<p align="center">
-  Made with ❤️ and Django
-</p>
+This project is open-source and released under the terms of the [MIT License](LICENSE).  
+Copyright (c) 2024-2026 **S. M. Nafis Shahriar**.

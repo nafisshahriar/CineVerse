@@ -1,0 +1,45 @@
+{% if movies.has_other_pages %}
+<nav class="pagination" aria-label="Movie pagination">
+  <div class="pagination-controls">
+    {% if movies.has_previous %}
+    <a href="?page=1{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.language %}&language={{ filters.language }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}{% if filters.resolution %}&resolution={{ filters.resolution }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}{% if filters.group %}&group={{ filters.group }}{% endif %}{% for g in filters.genres %}&genres={{ g }}{% endfor %}"
+      class="page-link nav-btn" data-page="1" aria-label="First">« First</a>
+    
+    <a href="?page={{ movies.previous_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.language %}&language={{ filters.language }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}{% if filters.resolution %}&resolution={{ filters.resolution }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}{% if filters.group %}&group={{ filters.group }}{% endif %}{% for g in filters.genres %}&genres={{ g }}{% endfor %}"
+      class="page-link nav-btn" data-page="{{ movies.previous_page_number }}" aria-label="Previous">‹ Prev</a>
+    {% endif %}
+
+    <div class="page-numbers">
+      {% for p in page_range %}
+        {% if p == '...' %}
+          <span class="page-ellipsis">…</span>
+        {% elif p == movies.number %}
+          <span class="page-link active" aria-current="page">{{ p }}</span>
+        {% else %}
+          <a href="?page={{ p }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.language %}&language={{ filters.language }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}{% if filters.resolution %}&resolution={{ filters.resolution }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}{% if filters.group %}&group={{ filters.group }}{% endif %}{% for g in filters.genres %}&genres={{ g }}{% endfor %}"
+            class="page-link" data-page="{{ p }}">{{ p }}</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    {% if movies.has_next %}
+    <a href="?page={{ movies.next_page_number }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.language %}&language={{ filters.language }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}{% if filters.resolution %}&resolution={{ filters.resolution }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}{% if filters.group %}&group={{ filters.group }}{% endif %}{% for g in filters.genres %}&genres={{ g }}{% endfor %}"
+      class="page-link nav-btn" data-page="{{ movies.next_page_number }}" aria-label="Next">Next ›</a>
+    
+    <a href="?page={{ movies.paginator.num_pages }}{% if query %}&q={{ query }}{% endif %}{% if filters.year_from %}&year_from={{ filters.year_from }}{% endif %}{% if filters.year_to %}&year_to={{ filters.year_to }}{% endif %}{% if filters.min_rating %}&min_rating={{ filters.min_rating }}{% endif %}{% if filters.sort %}&sort={{ filters.sort }}{% endif %}{% if filters.language %}&language={{ filters.language }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}{% if filters.resolution %}&resolution={{ filters.resolution }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}{% if filters.group %}&group={{ filters.group }}{% endif %}{% for g in filters.genres %}&genres={{ g }}{% endfor %}"
+      class="page-link nav-btn" data-page="{{ movies.paginator.num_pages }}" aria-label="Last">Last »</a>
+    {% endif %}
+  </div>
+
+  <div class="pagination-tools">
+    <span class="page-info">
+      Page <strong>{{ movies.number }}</strong> of <strong>{{ movies.paginator.num_pages }}</strong>
+    </span>
+    <form class="page-jump-form" onsubmit="return false;">
+      <label for="pageJumpInput">Jump to:</label>
+      <input id="pageJumpInput" type="number" min="1" max="{{ movies.paginator.num_pages }}" class="page-jump-input" placeholder="Page #">
+      <button type="button" class="btn-page-jump">Go</button>
+    </form>
+  </div>
+</nav>
+{% endif %}

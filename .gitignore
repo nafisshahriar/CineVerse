@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+cineVerse/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Database (optional if self-hosting, ignore journals/locks)
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Static and media
+staticfiles/
+media/
+
+# Logs
+*.log
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Scratch and test files
+scratch/
+_test_*.js
+_check_*.js

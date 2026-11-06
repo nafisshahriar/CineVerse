@@ -1,45 +1,75 @@
 {% for movie in movies %}
 <article class="card" data-movie-id="{{ movie.id }}">
-  <a class="card-link" href="{{ movie.file_url }}" target="_blank" rel="noopener" title="Play {{ movie.title }}">
+  <a class="card-link" href="{{ movie.file_url }}" target="_blank" rel="noopener" title="Play {{ movie.display_title }}">
     <div class="poster">
       {% if movie.poster_url %}
-      <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" loading="lazy">
+      <img src="{{ movie.poster_url }}" alt="{{ movie.display_title }} poster" loading="lazy">
       {% else %}
       <div class="no-poster">
         <span class="no-poster-icon">🎬</span>
-        <span>No Poster</span>
+        <span class="no-poster-text">No Poster</span>
+        <button class="btn-card-find-poster" type="button" 
+          onclick="event.preventDefault(); event.stopPropagation(); quickFetchCardPoster(this, {{ movie.id }})" 
+          title="Search TMDB to fetch poster & metadata">
+          <span class="btn-icon">🔍</span> Fetch Poster
+        </button>
       </div>
       {% endif %}
+      
       <div class="poster-overlay">
         <span class="play-icon">▶</span>
       </div>
-    </div>
-  </a>
-  <div class="meta">
-    <h2 class="title" title="{{ movie.title }}">{{ movie.title }}</h2>
-    <div class="meta-row">
-      <span class="year">{{ movie.year|default:"—" }}</span>
-      {% if movie.vote_average %}
-      <span class="badge rating-badge">⭐ {{ movie.vote_average|floatformat:1 }}</span>
+
+      <div class="poster-badges top-left">
+        {% if movie.resolution %}
+        <span class="badge res-badge res-{{ movie.resolution|lower }}">{{ movie.resolution }}</span>
+        {% endif %}
+      </div>
+
+      {% if movie.imdb_rating %}
+      <div class="poster-badges top-right">
+        <span class="badge imdb-rating-badge" title="IMDb: {{ movie.imdb_rating|floatformat:1 }}"><span class="star-icon">★</span> {{ movie.imdb_rating|floatformat:1 }}</span>
+      </div>
       {% endif %}
     </div>
-    {% if movie.popularity or movie.vote_count %}
-    <div class="stats-row">
-      {% if movie.popularity %}<span class="stat">🔥 {{ movie.popularity|floatformat:0 }}</span>{% endif %}
-      {% if movie.vote_count %}<span class="stat">👍 {{ movie.vote_count }}</span>{% endif %}
+  </a>
+
+  <div class="meta">
+    <h2 class="title" title="{{ movie.display_title }}">{{ movie.display_title }}</h2>
+    
+    <div class="meta-row">
+      <div class="meta-left">
+        <span class="year">{{ movie.year|default:"—" }}</span>
+        {% if movie.primary_genre %}
+        <span class="meta-dot">•</span>
+        <span class="card-genre" title="{{ movie.genres }}">{{ movie.primary_genre }}</span>
+        {% endif %}
+      </div>
+
+      {% if movie.source %}
+      <span class="badge source-badge" title="Server: {{ movie.source }}">{{ movie.source }}</span>
+      {% endif %}
     </div>
-    {% endif %}
-    <button class="info-btn" type="button" title="View details">ℹ️ Details</button>
+
+    <div class="stats-row">
+      {% if movie.popularity %}
+      <span class="stat pop-stat" title="Popularity score: {{ movie.popularity|floatformat:0 }}">🔥 {{ movie.popularity|floatformat:0 }}</span>
+      {% endif %}
+      {% if movie.copy_count and movie.copy_count > 1 %}
+      <span class="stat copy-badge" title="{{ movie.copy_count }} copies available across servers">📀 {{ movie.copy_count }} versions</span>
+      {% endif %}
+    </div>
+
+    <button class="info-btn" type="button" title="View details, IMDb info, and sources">ℹ️ Details</button>
   </div>
 </article>
 {% empty %}
 <div class="no-results">
   <div class="no-results-icon">🎭</div>
   <h3>No movies found</h3>
-  <p>Try adjusting your search or filters</p>
+  <p>Try adjusting your search terms or active filters</p>
   {% if not total_count %}
-  <p class="hint">Run the crawler to import movies:<br><code>python manage.py crawl_h5ai --url "your-h5ai-url"</code>
-  </p>
+  <p class="hint">Run the crawler or update pipeline to import movies:<br><code>python manage.py update_all --url "your-h5ai-url"</code></p>
   {% endif %}
 </div>
 {% endfor %}

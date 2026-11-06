@@ -5,5 +5,12 @@ urlpatterns = [
     path('', views.index, name='movies_index'),
     path('search_ajax/', views.search_ajax, name='movies_search_ajax'),
     path('movie/<int:movie_id>/detail/', views.movie_detail_ajax, name='movie_detail'),
+    path('manage/', views.manage_dashboard, name='manage_dashboard'),
+    path('manage/api/stats/', views.manage_stats_api, name='manage_stats_api'),
+    path('manage/api/task/start/', views.manage_task_start_api, name='manage_task_start_api'),
+    path('manage/api/task/status/', views.manage_task_status_api, name='manage_task_status_api'),
+    path('manage/api/task/stop/', views.manage_task_stop_api, name='manage_task_stop_api'),
+    path('manage/api/movies/', views.manage_movies_api, name='manage_movies_api'),
+    path('manage/api/movie/<int:movie_id>/action/', views.manage_movie_action_api, name='manage_movie_action_api'),
 ]
 
