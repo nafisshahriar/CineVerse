@@ -23,6 +23,7 @@
         </p>
       </div>
       <div class="header-actions">
+        {% if user.is_staff or not manage_require_auth %}
         <!-- Live Background Task Progress Pill -->
         <div id="homeTaskStatusPill" class="task-status-pill home-task-pill" style="display:none;">
           <span class="status-dot"></span>
@@ -40,6 +41,11 @@
         <a href="/manage/" class="btn-manage-link" title="Open Management &amp; Maintenance Studio">
           <span class="manage-icon">⚙️</span> Management
         </a>
+        {% else %}
+        <a href="/admin/login/?next=/" class="btn-manage-link" title="Administrator Login">
+          <span class="manage-icon">🔒</span> Admin Login
+        </a>
+        {% endif %}
       </div>
     </div>
   </header>
@@ -463,6 +469,7 @@
                   <div class="detail-header">
                     <div class="detail-header-row">
                       <h2 class="detail-title">${data.title || 'Movie Details'} ${data.year ? `<span class="detail-year">(${data.year})</span>` : ''}</h2>
+                      ${data.can_manage ? `
                       <div class="modal-action-btns">
                         <button id="btnModalRefetch" class="btn-modal-refetch" type="button" onclick="quickFetchModalMovie(${data.id || movieId})" title="Search TMDB to fetch/refresh poster, overview, cast, director, and authentic IMDb rating">
                           <span class="btn-icon">🔄</span> Refresh Metadata
@@ -471,7 +478,9 @@
                           ✏️ Edit Year / ID
                         </button>
                       </div>
+                      ` : ''}
                     </div>
+                    ${data.can_manage ? `
                     <div id="modalEditStrip" class="modal-edit-strip" style="display:none;">
                       <div class="edit-strip-row">
                         <div class="edit-strip-field">
@@ -488,6 +497,7 @@
                         </div>
                       </div>
                     </div>
+                    ` : ''}
                   </div>
 
                   ${data.tagline ? `<p class="tagline">"${data.tagline}"</p>` : ''}

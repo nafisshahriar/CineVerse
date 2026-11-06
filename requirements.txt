@@ -4,3 +4,5 @@ beautifulsoup4
 python-dotenv
 Pillow
 gunicorn
+whitenoise>=6.5.0
+dj-database-url>=2.1.0

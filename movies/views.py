@@ -1,10 +1,13 @@
 import json
+from functools import wraps
+from django.conf import settings
 from django.shortcuts import render, get_object_or_404
 from django.db.models import Q, Min, Max, F, Count
 from django.http import HttpResponse, JsonResponse
 from django.template.loader import render_to_string
 from django.core.paginator import Paginator
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.views import redirect_to_login
 from collections import defaultdict
 from .models import Movie, MovieDetail, CrawledDirectory, FailedParse
 from .services import tmdb_service, fetch_poster_and_details
@@ -277,6 +280,7 @@ def index(request):
             ('missing', 'Missing'),
             ('failed', 'Failed'),
         ],
+        'manage_require_auth': getattr(settings, 'MANAGE_REQUIRE_AUTH', False),
     }
 
     return render(request, 'movies/index.html', context)
@@ -450,13 +454,57 @@ def movie_detail_ajax(request, movie_id):
         'source': movie.source,
         'resolution': movie.resolution,
         'language': movie.language,
+        'can_manage': bool(not getattr(settings, 'MANAGE_REQUIRE_AUTH', False) or (request.user.is_authenticated and request.user.is_staff)),
     })
 
 
 # ============================================================
-# Management & Maintenance Dashboard Views
+# Management & Maintenance Access Control & Views
 # ============================================================
 
+def manage_auth_required(view_func):
+    """
+    Access control decorator for the Management & Maintenance Studio.
+    If settings.MANAGE_REQUIRE_AUTH is True (default in production / DEBUG=False):
+      - Verifies that request.user is authenticated and has is_staff=True.
+      - Alternatively accepts X-Manage-Token header or ?token= query param if MANAGE_SECRET_TOKEN is set.
+      - Blocks unauthorized visitors:
+        - API endpoints return HTTP 403 Forbidden with JSON error message.
+        - Web pages redirect to /admin/login/?next=<path>.
+    If settings.MANAGE_REQUIRE_AUTH is False:
+      - Allows unrestricted access (for local development or private home networks).
+    """
+    @wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        require_auth = getattr(settings, 'MANAGE_REQUIRE_AUTH', False)
+        if not require_auth:
+            return view_func(request, *args, **kwargs)
+
+        # 1. Staff session check
+        if request.user.is_authenticated and request.user.is_staff:
+            return view_func(request, *args, **kwargs)
+
+        # 2. Token-based API access (for curl / cron jobs / webhooks)
+        secret_token = getattr(settings, 'MANAGE_SECRET_TOKEN', '')
+        if secret_token:
+            token = request.headers.get('X-Manage-Token') or request.GET.get('token')
+            if token and token == secret_token:
+                return view_func(request, *args, **kwargs)
+
+        # 3. Deny unauthorized access
+        if request.path.startswith('/manage/api/'):
+            return JsonResponse({
+                'success': False,
+                'error': 'Unauthorized',
+                'message': 'Administrator authentication is required to access management controls or perform maintenance tasks.'
+            }, status=403)
+
+        return redirect_to_login(request.get_full_path(), login_url='/admin/login/')
+
+    return _wrapped
+
+
+@manage_auth_required
 def manage_dashboard(request):
     """Render the management & maintenance dashboard."""
     total_files = Movie.objects.count()
@@ -506,6 +554,7 @@ def manage_dashboard(request):
     return render(request, 'movies/manage.html', context)
 
 
+@manage_auth_required
 def manage_stats_api(request):
     """API returning live metrics and progress for the management dashboard."""
     total_files = Movie.objects.count()
@@ -533,6 +582,7 @@ def manage_stats_api(request):
 
 
 @csrf_exempt
+@manage_auth_required
 def manage_task_start_api(request):
     """API endpoint to launch maintenance background tasks."""
     if request.method != 'POST':
@@ -552,18 +602,21 @@ def manage_task_start_api(request):
     return JsonResponse({'success': success, 'message': msg})
 
 
+@manage_auth_required
 def manage_task_status_api(request):
     """API endpoint to poll active background task progress and streaming logs."""
     return JsonResponse(task_manager.get_status())
 
 
 @csrf_exempt
+@manage_auth_required
 def manage_task_stop_api(request):
     """API endpoint to cancel / stop an active background task."""
     success, msg = task_manager.stop_task()
     return JsonResponse({'success': success, 'message': msg})
 
 
+@manage_auth_required
 def manage_movies_api(request):
     """API endpoint for paginated and issue-filtered movie inspection."""
     q = request.GET.get('q', '').strip()
@@ -626,6 +679,7 @@ def manage_movies_api(request):
 
 
 @csrf_exempt
+@manage_auth_required
 def manage_movie_action_api(request, movie_id):
     """API endpoint for single-movie maintenance actions (re-fetch, edit IDs, delete)."""
     if request.method != 'POST':

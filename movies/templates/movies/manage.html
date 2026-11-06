@@ -868,6 +868,11 @@
         <a href="/" class="btn-return-cinema" title="Back to Cinema Catalog">
           🎬 Cinema View
         </a>
+        {% if user.is_authenticated %}
+        <a href="/admin/logout/?next=/" class="btn-return-cinema" title="Signed in as {{ user.username }}. Click to sign out.">
+          👤 Sign Out
+        </a>
+        {% endif %}
       </div>
     </div>
   </header>

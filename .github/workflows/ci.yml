@@ -1,0 +1,72 @@
+name: CineVerse CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test & Validate (CI)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Django System Check
+        env:
+          DJANGO_SECRET_KEY: ci-test-secret-key
+          DJANGO_DEBUG: "False"
+        run: |
+          python manage.py check
+
+      - name: Verify Model Migrations
+        env:
+          DJANGO_SECRET_KEY: ci-test-secret-key
+          DJANGO_DEBUG: "False"
+        run: |
+          python manage.py makemigrations --check --dry-run
+
+      - name: Run Automated Test Suite
+        env:
+          DJANGO_SECRET_KEY: ci-test-secret-key
+          DJANGO_DEBUG: "False"
+          MANAGE_REQUIRE_AUTH: "True"
+        run: |
+          python manage.py test
+
+  deploy:
+    name: Deploy to Production (CD)
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Deployment via Render Webhook
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -n "$RENDER_DEPLOY_HOOK" ]; then
+            echo "🚀 Triggering Render automated deployment..."
+            curl -f -sS -X POST "$RENDER_DEPLOY_HOOK"
+            echo "✅ Deployment signal dispatched to Render!"
+          else
+            echo "ℹ️ Optional secret RENDER_DEPLOY_HOOK_URL is not configured."
+            echo "   (If using Render native Git integration, Render auto-deploys on push to main)."
+          fi
