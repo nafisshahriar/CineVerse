@@ -921,7 +921,10 @@ def manage_movie_action_api(request, movie_id):
 
     elif action == 'delete':
         title = movie.display_title
-        movie.delete()
-        return JsonResponse({'success': True, 'message': f"Deleted movie: {title}"})
+        if movie.group_key:
+            deleted_count, _ = Movie.objects.filter(group_key=movie.group_key).delete()
+        else:
+            deleted_count, _ = movie.delete()
+        return JsonResponse({'success': True, 'message': f"Deleted movie: {title} ({deleted_count} record(s) removed)"})
 
     return JsonResponse({'success': False, 'message': f"Unknown action: {action}"})

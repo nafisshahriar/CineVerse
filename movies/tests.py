@@ -417,6 +417,9 @@ class ManagementSecurityTests(TestCase):
         self.assertTrue(any("Bryan Cranston" in c.get('name', '') for c in data['cast']))
 
     def test_update_imdb_id_and_fetch_details(self):
+        # Authenticate staff user to pass when MANAGE_REQUIRE_AUTH is True in CI
+        self.client.login(username='admin_user', password='Password123!')
+
         # Movie initially has mismatched / messy title and no IMDb ID
         m = Movie.objects.create(
             title="02.Isle.of.Dogs.2018.1080p.mkv",
@@ -451,6 +454,33 @@ class ManagementSecurityTests(TestCase):
         # Check that MovieDetail was populated with correct cast & director
         self.assertTrue(hasattr(m, 'detail'))
         self.assertEqual(m.detail.director.get('name'), "Wes Anderson")
+
+    def test_delete_movie_deletes_all_grouped_copies(self):
+        self.client.login(username='admin_user', password='Password123!')
+        m1 = Movie.objects.create(
+            title="Sample Movie 1080p",
+            clean_title="Sample Movie",
+            group_key="sample_movie_dup_test",
+            file_url="http://example.com/sample_1080p.mkv",
+            is_primary_copy=True
+        )
+        m2 = Movie.objects.create(
+            title="Sample Movie 4K",
+            clean_title="Sample Movie",
+            group_key="sample_movie_dup_test",
+            file_url="http://example.com/sample_4k.mkv",
+            is_primary_copy=False
+        )
+        self.assertEqual(Movie.objects.filter(group_key="sample_movie_dup_test").count(), 2)
+
+        resp = self.client.post(
+            f'/manage/api/movie/{m1.id}/action/',
+            data=json.dumps({'action': 'delete'}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp.status_code, 200)
+        # Both copies in group_key must be deleted
+        self.assertEqual(Movie.objects.filter(group_key="sample_movie_dup_test").count(), 0)
 
     def test_movie_refresh_with_imdb_id_in_payload(self):
         m = Movie.objects.create(
