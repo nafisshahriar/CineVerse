@@ -292,3 +292,68 @@ class ManagementSecurityTests(TestCase):
         m.refresh_from_db()
         self.assertIsNotNone(m.imdb_rating)
         self.assertTrue(m.imdb_id.startswith('tt'))
+
+    def test_movie_runtime_display(self):
+        m = Movie.objects.create(
+            title="Inception",
+            file_url="http://example.com/inc.mkv",
+            runtime=148
+        )
+        self.assertEqual(m.runtime_display, "2h 28m")
+
+        # Test fallback to detail.runtime
+        m2 = Movie.objects.create(
+            title="Short Film",
+            file_url="http://example.com/short.mkv",
+            runtime=None
+        )
+        MovieDetail.objects.create(movie=m2, runtime=45)
+        self.assertEqual(m2.runtime_display, "45m")
+
+    def test_movie_detail_ajax_returns_tmdb_language_and_trailer(self):
+        m = Movie.objects.create(
+            title="Parasite 2019",
+            clean_title="Parasite",
+            year=2019,
+            language="English",  # Fake folder language from crawl
+            file_url="http://example.com/parasite.mkv"
+        )
+        detail = MovieDetail.objects.create(
+            movie=m,
+            tmdb_id=496243,
+            cast=[{'name': 'Song Kang-ho'}],
+            director={'name': 'Bong Joon-ho'},
+            original_language="ko",  # Official TMDB language
+            trailer_key="5xH0R_uie1U",
+            trailer_url="https://www.youtube.com/watch?v=5xH0R_uie1U"
+        )
+        response = self.client.get(f'/movie/{m.id}/detail/')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        # Must be authentic Korean, NOT "English" from the folder path
+        self.assertEqual(data['language'], "Korean")
+        self.assertEqual(data['trailer_key'], "5xH0R_uie1U")
+        self.assertEqual(data['trailer_url'], "https://www.youtube.com/watch?v=5xH0R_uie1U")
+
+    def test_movie_card_only_runtime_imdb_and_genre(self):
+        from django.template.loader import render_to_string
+        m = Movie.objects.create(
+            title="Dune Part Two 2024",
+            clean_title="Dune: Part Two",
+            year=2024,
+            runtime=166,
+            imdb_rating=8.6,
+            genres="Sci-Fi, Adventure",
+            resolution="4K",
+            source="Dhaka-Flix 14",
+            file_url="http://example.com/dune.mkv"
+        )
+        html = render_to_string('movies/_movie_cards.html', {'movies': [m]})
+        # Must contain runtime, imdb rating, and primary genre
+        self.assertIn("2h 46m", html)
+        self.assertIn("8.6", html)
+        self.assertIn("Sci-Fi", html)
+        # Must NOT contain resolution badges or server badges on card
+        self.assertNotIn("res-badge", html)
+        self.assertNotIn("source-badge", html)
+        self.assertNotIn("Dhaka-Flix 14", html)

@@ -437,7 +437,7 @@
               const runtimeStr = data.runtime ? `${Math.floor(data.runtime/60)}h ${data.runtime%60}m` : null;
               const budgetStr = data.budget ? `$${(data.budget/1_000_000).toFixed(1)}M` : null;
               const revenueStr = data.revenue ? `$${(data.revenue/1_000_000).toFixed(1)}M` : null;
-              const langStr = data.language || data.original_language?.toUpperCase() || null;
+              const langStr = data.language || null;
 
               // Render available versions / copies
               let copiesHtml = '';
@@ -470,16 +470,28 @@
                   <div class="detail-header">
                     <div class="detail-header-row">
                       <h2 class="detail-title">${data.title || 'Movie Details'} ${data.year ? `<span class="detail-year">(${data.year})</span>` : ''}</h2>
-                      ${data.can_manage ? `
                       <div class="modal-action-btns">
-                        <button id="btnModalRefetch" class="btn-modal-refetch" type="button" onclick="quickFetchModalMovie(${data.id || movieId})" title="Search TMDB to fetch/refresh poster, overview, cast, director, and authentic IMDb rating">
-                          <span class="btn-icon">🔄</span> Refresh Metadata
+                        <button id="btnWatchTrailer" class="btn-watch-trailer" type="button" onclick="toggleModalTrailer('${data.trailer_key || ''}', '${escapeJs(data.title)}', '${data.year || ''}')" title="Watch official movie trailer">
+                          <span class="btn-icon">🎬</span> Watch Trailer
                         </button>
+                        <button id="btnModalRefetch" class="btn-modal-refetch" type="button" onclick="quickFetchModalMovie(${data.id || movieId})" title="Search TMDB &amp; IMDb to fetch/refresh poster, overview, cast, director, and authentic IMDb rating">
+                          <span class="btn-icon">⭐</span> Fetch IMDb Details
+                        </button>
+                        ${data.can_manage ? `
                         <button class="btn-modal-edit-toggle" type="button" onclick="toggleModalEditStrip()" title="Correct year or IMDb ID if mislabeled">
                           ✏️ Edit Year / ID
                         </button>
+                        ` : ''}
                       </div>
-                      ` : ''}
+                    </div>
+                    <div id="modalTrailerContainer" class="modal-trailer-container" style="display:none;">
+                      <div class="trailer-header">
+                        <span class="trailer-title">🎬 Official Trailer</span>
+                        <button class="btn-close-trailer" type="button" onclick="closeModalTrailer()">✕ Close Trailer</button>
+                      </div>
+                      <div class="trailer-iframe-wrapper">
+                        <iframe id="modalTrailerIframe" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                      </div>
                     </div>
                     ${data.can_manage ? `
                     <div id="modalEditStrip" class="modal-edit-strip" style="display:none;">
@@ -564,7 +576,43 @@
           });
       }
 
+      function escapeJs(str) {
+        if (!str) return '';
+        return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      }
+
+      function toggleModalTrailer(key, title, year) {
+        const container = document.getElementById('modalTrailerContainer');
+        const iframe = document.getElementById('modalTrailerIframe');
+        if (!container || !iframe) return;
+
+        if (container.style.display === 'block') {
+          closeModalTrailer();
+          return;
+        }
+
+        let src = '';
+        if (key && key !== 'null' && key !== 'undefined' && String(key).trim() !== '') {
+          src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(key)}?autoplay=1&rel=0`;
+        } else {
+          const q = encodeURIComponent(`${title} ${year || ''} official trailer`);
+          src = `https://www.youtube-nocookie.com/embed?listType=search&list=${q}&autoplay=1`;
+        }
+
+        iframe.src = src;
+        container.style.display = 'block';
+        container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+
+      function closeModalTrailer() {
+        const container = document.getElementById('modalTrailerContainer');
+        const iframe = document.getElementById('modalTrailerIframe');
+        if (iframe) iframe.src = '';
+        if (container) container.style.display = 'none';
+      }
+
       function closeModal() {
+        closeModalTrailer();
         modal.hidden = true;
         document.body.style.overflow = '';
       }
@@ -576,6 +624,8 @@
       });
       window.showMovieDetails = showMovieDetails;
       window.fetchMovies = fetchMovies;
+      window.toggleModalTrailer = toggleModalTrailer;
+      window.closeModalTrailer = closeModalTrailer;
 
       // Toast notification helper
       window.showToast = function(message, type = 'info') {
@@ -695,31 +745,42 @@
 
             // Also update the card on the page grid
             const card = document.querySelector(`.card[data-movie-id="${movieId}"]`);
-            if (card && data.movie && data.movie.poster_url) {
-              const posterWrap = card.querySelector('.poster');
-              const noPoster = posterWrap ? posterWrap.querySelector('.no-poster') : null;
-              if (noPoster) {
-                const img = document.createElement('img');
-                img.src = data.movie.poster_url;
-                img.className = 'fade-in-poster';
-                posterWrap.replaceChild(img, noPoster);
+            if (card && data.movie) {
+              if (data.movie.poster_url) {
+                const posterWrap = card.querySelector('.poster');
+                const noPoster = posterWrap ? posterWrap.querySelector('.no-poster') : null;
+                if (noPoster) {
+                  const img = document.createElement('img');
+                  img.src = data.movie.poster_url;
+                  img.className = 'fade-in-poster';
+                  posterWrap.replaceChild(img, noPoster);
+                }
               }
               if (data.movie.imdb_rating) {
-                let badge = card.querySelector('.imdb-rating-badge');
+                let badge = card.querySelector('.card-imdb');
                 if (badge) {
                   badge.innerHTML = `<span class="star-icon">★</span> ${data.movie.imdb_rating.toFixed(1)}`;
+                }
+              }
+              if (data.movie.runtime) {
+                let rBadge = card.querySelector('.card-runtime');
+                const h = Math.floor(data.movie.runtime / 60);
+                const m = data.movie.runtime % 60;
+                const rStr = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+                if (rBadge) {
+                  rBadge.innerHTML = `<span class="pill-icon">⏱️</span> ${rStr}`;
                 }
               }
             }
           } else {
             if (btn) {
               btn.disabled = false;
-              btn.innerHTML = '❌ Not Found on TMDB';
+              btn.innerHTML = '❌ Not Found';
               setTimeout(() => {
-                btn.innerHTML = '<span class="btn-icon">🔄</span> Fetch / Refresh TMDB Metadata';
+                btn.innerHTML = '<span class="btn-icon">⭐</span> Fetch IMDb Details';
               }, 2500);
             }
-            window.showToast(data.message || 'Could not find movie on TMDB', 'warning');
+            window.showToast(data.message || 'Could not resolve movie from TMDB or IMDb', 'warning');
           }
         })
         .catch(err => {

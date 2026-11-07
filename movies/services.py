@@ -190,13 +190,41 @@ class TMDBService:
             'tagline': details.get('tagline', ''),
             'imdb_id': details.get('imdb_id', ''),
             'original_language': details.get('original_language', ''),
+            'spoken_languages': [l.get('english_name') for l in details.get('spoken_languages', []) if l.get('english_name')],
             'budget': details.get('budget'),
             'revenue': details.get('revenue'),
             'production_companies': [c['name'] for c in details.get('production_companies', [])],
             'popularity': details.get('popularity'),
             'vote_count': details.get('vote_count'),
             'vote_average': details.get('vote_average'),
+            **(self.get_movie_trailer(tmdb_id) or {}),
             **self._extract_credits(tmdb_id),
+        }
+
+    def get_movie_trailer(self, tmdb_id: int) -> Optional[Dict]:
+        """Fetch official YouTube trailer for a movie."""
+        data = self._get(f'/movie/{tmdb_id}/videos')
+        if not data or not data.get('results'):
+            return None
+        videos = data.get('results', [])
+        yt_vids = [
+            v for v in videos
+            if v.get('site') == 'YouTube' and v.get('type') in ('Trailer', 'Teaser') and v.get('key')
+        ]
+        if not yt_vids:
+            return None
+        yt_vids.sort(
+            key=lambda v: (
+                1 if v.get('official') else 0,
+                1 if v.get('type') == 'Trailer' else 0,
+            ),
+            reverse=True
+        )
+        best = yt_vids[0]
+        return {
+            'trailer_key': best.get('key'),
+            'trailer_url': f"https://www.youtube.com/watch?v={best.get('key')}",
+            'trailer_name': best.get('name', 'Official Trailer'),
         }
 
     def _extract_credits(self, tmdb_id: int) -> Dict:
@@ -375,6 +403,8 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
         update_fields['imdb_rating'] = imdb_rating
     if imdb_id:
         update_fields['imdb_id'] = imdb_id
+    if ext and ext.get('runtime'):
+        update_fields['runtime'] = ext['runtime']
 
     with transaction.atomic():
         for k, v in update_fields.items():
@@ -399,6 +429,10 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
                     detail.tagline = ext.get('tagline', '')
                     detail.cast = ext.get('cast', [])
                     detail.director = ext.get('director', {})
+                    detail.original_language = ext.get('original_language', '')
+                    if ext.get('trailer_key'):
+                        detail.trailer_key = ext.get('trailer_key')
+                        detail.trailer_url = ext.get('trailer_url')
                 elif res:
                     detail.overview = res.get('overview', '')
                     detail.backdrop_url = backdrop_url

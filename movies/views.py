@@ -350,6 +350,9 @@ def movie_detail_ajax(request, movie_id):
             detail.production_companies = extended.get('production_companies', [])
             detail.cast = extended.get('cast', [])
             detail.director = extended.get('director', {})
+            if extended.get('trailer_key'):
+                detail.trailer_key = extended.get('trailer_key')
+                detail.trailer_url = extended.get('trailer_url')
 
             if extended.get('release_date'):
                 try:
@@ -362,9 +365,25 @@ def movie_detail_ajax(request, movie_id):
 
             detail.save()
 
-            if extended.get('original_language') and not movie.language:
-                movie.language = detect_language(tmdb_code=extended['original_language'])
-                movie.save()
+            if extended.get('runtime') and not movie.runtime:
+                movie.runtime = extended.get('runtime')
+                movie.save(update_fields=['runtime'])
+
+    # On-demand trailer resolution if missing
+    if detail and not detail.trailer_key and detail.tmdb_id:
+        try:
+            trailer_info = tmdb_service.get_movie_trailer(detail.tmdb_id)
+            if trailer_info and trailer_info.get('trailer_key'):
+                detail.trailer_key = trailer_info['trailer_key']
+                detail.trailer_url = trailer_info['trailer_url']
+                detail.save(update_fields=['trailer_key', 'trailer_url'])
+        except Exception:
+            pass
+
+    # Ensure movie runtime is synced from detail
+    if detail and detail.runtime and not movie.runtime:
+        movie.runtime = detail.runtime
+        movie.save(update_fields=['runtime'])
 
     # Sync genres to Movie and copies in group
     if not movie.genres and detail and detail.genres:
@@ -426,6 +445,13 @@ def movie_detail_ajax(request, movie_id):
     imdb_code = movie.imdb_id or (detail.imdb_id if detail else '')
     genres_data = detail.genres if (detail and detail.genres) else movie.genre_list
 
+    # Resolve authentic language strictly from TMDB/IMDb
+    tmdb_lang = None
+    if detail and detail.original_language:
+        from movies.utils import TMDB_LANG_MAP
+        code = detail.original_language.lower().strip()
+        tmdb_lang = TMDB_LANG_MAP.get(code, detail.original_language.upper())
+
     return JsonResponse({
         'success': True,
         'id': movie.id,
@@ -437,11 +463,14 @@ def movie_detail_ajax(request, movie_id):
         'imdb_rating': movie.imdb_rating or (detail.imdb_rating if detail else None),
         'overview': detail.overview if detail else '',
         'genres': genres_data,
-        'runtime': detail.runtime if detail else None,
+        'runtime': (detail.runtime if detail else None) or movie.runtime,
         'release_date': str(detail.release_date) if (detail and detail.release_date) else None,
         'backdrop_url': detail.backdrop_url if detail else '',
         'tagline': detail.tagline if detail else '',
-        'original_language': (detail.original_language if detail else '') or movie.language,
+        'original_language': detail.original_language if detail else None,
+        'language': tmdb_lang,  # Strictly TMDB/IMDb authentic language name
+        'trailer_key': detail.trailer_key if (detail and detail.trailer_key) else None,
+        'trailer_url': detail.trailer_url if (detail and detail.trailer_url) else None,
         'budget': detail.budget if detail else None,
         'revenue': detail.revenue if detail else None,
         'production_companies': detail.production_companies if detail else [],
@@ -453,7 +482,6 @@ def movie_detail_ajax(request, movie_id):
         'copies': all_copies,
         'source': movie.source,
         'resolution': movie.resolution,
-        'language': movie.language,
         'can_manage': bool(not getattr(settings, 'MANAGE_REQUIRE_AUTH', False) or (request.user.is_authenticated and request.user.is_staff)),
     })
 

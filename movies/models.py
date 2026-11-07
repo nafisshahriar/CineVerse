@@ -22,6 +22,7 @@ class Movie(models.Model):
     vote_average = models.FloatField(null=True, blank=True, db_index=True)
     imdb_id = models.CharField(max_length=20, blank=True, default='', db_index=True)
     imdb_rating = models.FloatField(null=True, blank=True, db_index=True)
+    runtime = models.IntegerField(null=True, blank=True)  # in minutes
     fetched = models.BooleanField(default=False)
     metadata_status = models.CharField(max_length=32, default='missing', db_index=True)
     last_crawled = models.DateTimeField(null=True, blank=True)
@@ -56,6 +57,21 @@ class Movie(models.Model):
         if self.genres:
             return [g.strip() for g in self.genres.split(',') if g.strip()]
         return []
+
+    @property
+    def runtime_display(self):
+        rt = self.runtime
+        if not rt and hasattr(self, 'detail') and self.detail and self.detail.runtime:
+            rt = self.detail.runtime
+        if rt:
+            h = rt // 60
+            m = rt % 60
+            if h > 0 and m > 0:
+                return f"{h}h {m}m"
+            elif h > 0:
+                return f"{h}h"
+            return f"{m}m"
+        return ''
 
 
 class CrawledDirectory(models.Model):
@@ -108,6 +124,8 @@ class MovieDetail(models.Model):
     runtime = models.IntegerField(null=True, blank=True)  # in minutes
     release_date = models.DateField(null=True, blank=True)
     backdrop_url = models.URLField(blank=True, null=True)
+    trailer_key = models.CharField(max_length=64, blank=True, default='')  # YouTube video ID
+    trailer_url = models.URLField(blank=True, null=True)
     tagline = models.CharField(max_length=512, blank=True)
     imdb_id = models.CharField(max_length=20, blank=True)
     imdb_rating = models.FloatField(null=True, blank=True)
