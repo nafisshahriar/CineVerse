@@ -4,6 +4,7 @@ from urllib.parse import unquote
 import os
 from movies.models import Movie
 from movies.utils import parse_movie_info, ProgressTracker
+from movies.task_runner import is_task_stopped
 
 
 class Command(BaseCommand):
@@ -34,6 +35,9 @@ class Command(BaseCommand):
         updated_count = 0
 
         for i in range(0, len(all_ids), batch_size):
+            if is_task_stopped():
+                self.stdout.write(self.style.WARNING("\n[STOPPED] Backfill halted by user."))
+                break
             chunk_ids = all_ids[i:i + batch_size]
             movies = list(Movie.objects.filter(id__in=chunk_ids).select_related('detail'))
             

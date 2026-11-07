@@ -2,6 +2,7 @@ from django.core.management.base import BaseCommand
 from django.db import IntegrityError
 from django.utils import timezone
 from movies.models import Movie, CrawledDirectory, FailedParse
+from movies.task_runner import is_task_stopped
 from movies.utils import (
     crawl_h5ai_recursive, parse_movie_info, extract_last_modified_from_text,
     find_media_in_directory, MEDIA_EXTS, IGNORED_DIRS, detect_language
@@ -56,6 +57,10 @@ class Command(BaseCommand):
 
         try:
             for item in crawl_h5ai_recursive(root, per_request_timeout=timeout, max_items=max_items):
+                if is_task_stopped():
+                    self.stdout.write(self.style.WARNING("\n[STOPPED] Crawl halted by user."))
+                    break
+
                 stats['total_scanned'] += 1
 
                 # Progress output every 50 items

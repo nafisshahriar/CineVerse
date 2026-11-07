@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 import time
 from movies.models import Movie, MovieDetail
 from movies.services import tmdb_service
-from movies.utils import ProgressTracker, detect_language
+from movies.utils import ProgressTracker
+from movies.task_runner import is_task_stopped, detect_language
 
 
 class Command(BaseCommand):
@@ -77,6 +78,9 @@ class Command(BaseCommand):
         rating_shifts = 0
 
         for movie in movies_to_refresh:
+            if is_task_stopped():
+                self.stdout.write(self.style.WARNING("\n[STOPPED] Metadata refresh halted by user."))
+                break
             ok, shift_str = self._refresh_movie(movie)
             if ok:
                 success_count += 1

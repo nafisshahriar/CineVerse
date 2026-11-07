@@ -6,6 +6,7 @@ import requests
 import re
 from movies.models import Movie, MovieDetail
 from movies.utils import ProgressTracker, clean_title_for_search
+from movies.task_runner import is_task_stopped
 
 TMDB_GENRES = {
     28: 'Action',
@@ -73,6 +74,9 @@ class Command(BaseCommand):
         tracker = ProgressTracker(total, desc="Genre Fetch")
 
         def fetch_movie_genres(m):
+            if is_task_stopped():
+                return m.id, [], m.clean_title or m.title, None, True
+
             title = m.clean_title or m.title
             found_genres = []
             tmdb_id = None
@@ -113,16 +117,34 @@ class Command(BaseCommand):
                 except Exception:
                     pass
 
-            return m.id, found_genres, title, tmdb_id
+            return m.id, found_genres, title, tmdb_id, False
 
         success_count = 0
         batch_to_update = []
+        stopped_early = False
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_movie = {executor.submit(fetch_movie_genres, m): m for m in movies}
 
             for future in as_completed(future_to_movie):
-                m_id, genres, title, tmdb_id = future.result()
+                if is_task_stopped():
+                    stopped_early = True
+                    self.stdout.write(self.style.WARNING(
+                        "\n[STOPPED] Cancellation requested. Halting all worker threads..."
+                    ))
+                    for f in future_to_movie:
+                        f.cancel()
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
+
+                try:
+                    res = future.result()
+                    if len(res) >= 5 and res[4]:  # stopped mid-execution
+                        continue
+                    m_id, genres, title, tmdb_id = res[:4]
+                except Exception:
+                    continue
+
                 ok = len(genres) > 0
                 if ok:
                     success_count += 1
@@ -142,9 +164,14 @@ class Command(BaseCommand):
         if batch_to_update:
             self._save_batch(batch_to_update)
 
-        self.stdout.write(self.style.SUCCESS(
-            f'\n[OK] Finished! Successfully fetched genres for {success_count}/{total} movies.'
-        ))
+        if stopped_early:
+            self.stdout.write(self.style.WARNING(
+                f'\n[STOPPED] Task halted by user. Successfully fetched genres for {success_count} movies before stopping.'
+            ))
+        else:
+            self.stdout.write(self.style.SUCCESS(
+                f'\n[OK] Finished! Successfully fetched genres for {success_count}/{total} movies.'
+            ))
 
     def _save_batch(self, items):
         """Save a batch of genre updates to Movie and all copies in same group."""

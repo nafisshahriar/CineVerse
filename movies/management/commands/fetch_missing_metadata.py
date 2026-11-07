@@ -8,6 +8,7 @@ import time
 from movies.models import Movie, MovieDetail
 from movies.services import tmdb_service
 from movies.utils import ProgressTracker, clean_title_for_search, TMDB_GENRES
+from movies.task_runner import is_task_stopped
 
 
 class Command(BaseCommand):
@@ -55,8 +56,12 @@ class Command(BaseCommand):
 
         matched_count = 0
         failed_count = 0
+        stopped_early = False
 
         def process_movie(movie: Movie):
+            if is_task_stopped():
+                return False, movie.display_title, 'Cancelled', True
+
             clean_t = movie.clean_title or movie.title
             year_str = str(movie.year) if movie.year else ''
 
@@ -68,7 +73,7 @@ class Command(BaseCommand):
             if not res:
                 movie.metadata_status = 'failed'
                 movie.save(update_fields=['metadata_status'])
-                return False, movie.display_title, 'Not found on TMDB'
+                return False, movie.display_title, 'Not found on TMDB', False
 
             # Extract fields
             poster_path = res.get('poster_path')
@@ -113,7 +118,7 @@ class Command(BaseCommand):
                 # Extended details if requested
                 if include_details and tmdb_id:
                     try:
-                        ext = tmdb_service.get_extended_details(search_title, year_str)
+                        ext = tmdb_service.get_extended_details(clean_t, year_str)
                         if ext:
                             detail, _ = MovieDetail.objects.get_or_create(movie=movie)
                             detail.tmdb_id = tmdb_id
@@ -129,15 +134,28 @@ class Command(BaseCommand):
                         pass
 
             has_poster_str = 'Poster found' if poster_url else 'No poster image'
-            return True, movie.display_title, has_poster_str
+            return True, movie.display_title, has_poster_str, False
 
         # Execute concurrent tasks
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_movie = {executor.submit(process_movie, m): m for m in movies}
 
             for future in as_completed(future_to_movie):
+                if is_task_stopped():
+                    stopped_early = True
+                    self.stdout.write(self.style.WARNING(
+                        "\n[STOPPED] Cancellation requested. Halting all worker threads..."
+                    ))
+                    for f in future_to_movie:
+                        f.cancel()
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
+
                 try:
-                    success, title, extra = future.result()
+                    res = future.result()
+                    if len(res) >= 4 and res[3]:  # cancelled mid-flight
+                        continue
+                    success, title, extra = res[:3]
                     if success:
                         matched_count += 1
                     else:
@@ -151,6 +169,11 @@ class Command(BaseCommand):
                     failed_count += 1
                     self.stdout.write(self.style.ERROR(f"Error processing movie: {e}"))
 
-        self.stdout.write(self.style.SUCCESS(
-            f'\n[OK] Metadata fetch complete! Matched & enriched: {matched_count}/{total} movies ({failed_count} not found).'
-        ))
+        if stopped_early:
+            self.stdout.write(self.style.WARNING(
+                f'\n[STOPPED] Task halted by user. Enriched: {matched_count} movies before stopping.'
+            ))
+        else:
+            self.stdout.write(self.style.SUCCESS(
+                f'\n[OK] Metadata fetch complete! Matched & enriched: {matched_count}/{total} movies ({failed_count} not found).'
+            ))

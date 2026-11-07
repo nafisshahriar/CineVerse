@@ -3,7 +3,8 @@ from django.test import TestCase, Client, override_settings
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from movies.models import Movie, MovieDetail
-from movies.utils import clean_movie_title, detect_resolution, parse_movie_info, detect_language
+from movies.utils import clean_movie_title, detect_resolution, parse_movie_info, detect_language, fetch_imdb_rating_and_id
+from movies.task_runner import task_manager, is_task_stopped
 
 User = get_user_model()
 
@@ -231,3 +232,23 @@ class ManagementSecurityTests(TestCase):
         # With X-Manage-Token header: 200 OK
         r2 = self.client.get(reverse('manage_stats_api'), HTTP_X_MANAGE_TOKEN='super-secret-token-123')
         self.assertEqual(r2.status_code, 200)
+
+    def test_task_stop_flag_and_cancellation(self):
+        task_manager.stop_requested.clear()
+        self.assertFalse(is_task_stopped())
+        task_manager.stop_requested.set()
+        self.assertTrue(is_task_stopped())
+        task_manager.stop_requested.clear()
+
+    def test_clean_title_trailing_slashes(self):
+        clean, year = clean_movie_title("One Last Shot /")
+        self.assertEqual(clean, "One Last Shot")
+        clean2, _ = clean_movie_title("Grand Theft Auto VI An Extended Look /")
+        self.assertEqual(clean2, "Grand Theft Auto VI An Extended Look")
+
+    def test_fetch_imdb_rating_known_id(self):
+        # Inception tt1375666
+        rate, i_id, genres = fetch_imdb_rating_and_id("Inception", 2010, known_imdb_id="tt1375666")
+        self.assertIsNotNone(rate)
+        self.assertEqual(i_id, "tt1375666")
+        self.assertGreater(rate, 8.0)

@@ -3,6 +3,7 @@ from django.utils import timezone
 from movies.models import Movie, MovieDetail
 from movies.services import tmdb_service
 from movies.utils import ProgressTracker, detect_language
+from movies.task_runner import is_task_stopped
 from datetime import timedelta
 import time
 
@@ -64,6 +65,10 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING('Step 1/5: Crawl skipped (no --url provided)\n'))
 
         # ── Step 2: Fetch TMDB details ──────────────────────────────────
+        if is_task_stopped():
+            self.stdout.write(self.style.WARNING('\n[STOPPED] Pipeline halted by user.\n'))
+            return
+
         if not skip_details:
             self.stdout.write(self.style.MIGRATE_HEADING('Step 2/5: Fetching TMDB details'))
             self._fetch_details(stats, force, limit, delay)
@@ -76,6 +81,10 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('Step 2/5: Details skipped (--skip-details)\n'))
 
         # ── Step 3: Fetch credits ───────────────────────────────────────
+        if is_task_stopped():
+            self.stdout.write(self.style.WARNING('\n[STOPPED] Pipeline halted by user.\n'))
+            return
+
         if not skip_details:
             self.stdout.write(self.style.MIGRATE_HEADING('Step 3/5: Fetching cast & crew'))
             self._fetch_credits(stats, force, limit, delay)

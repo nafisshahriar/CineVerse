@@ -192,7 +192,7 @@ def clean_movie_title(raw_name: str) -> tuple[str, str]:
         title_part = re.sub(r'\[.*?\]', '', title_part)
         title_part = re.sub(r'\((?!500\b).*?\)', '', title_part)
 
-    clean = re.sub(r'\s+', ' ', title_part).strip(' -._:,#')
+    clean = re.sub(r'\s+', ' ', title_part).strip(' -._:,#/\\')
     return clean or name, year
 
 
@@ -418,72 +418,101 @@ def fetch_imdb_rating_and_id(title: str, year=None, known_imdb_id: str = None) -
     Fetch authentic IMDb rating, IMDb ID (tt...), and genres using Cinemeta and IMDb suggestion API.
     Zero API key required, fast and accurate.
     """
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-    # If known IMDb ID is provided (e.g. from TMDB)
-    if known_imdb_id and known_imdb_id.startswith('tt'):
+    def query_cinemeta(imdb_id: str) -> tuple[float | None, list]:
+        """Fetch rating and genres from Cinemeta for a verified IMDb ID."""
+        if not imdb_id or not imdb_id.startswith('tt'):
+            return None, []
         try:
-            r = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{known_imdb_id}.json', timeout=4)
+            r = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{imdb_id}.json', timeout=6)
             if r.status_code == 200:
                 meta = r.json().get('meta', {})
                 rate = meta.get('imdbRating')
                 genres = meta.get('genres') or []
                 if rate:
                     try:
-                        return float(rate), known_imdb_id, genres
+                        return float(rate), genres
                     except (ValueError, TypeError):
                         pass
         except Exception:
             pass
+        return None, []
 
-    # Search IMDb suggestion API
-    clean = re.sub(r'[^a-zA-Z0-9\s]+', ' ', title).strip().lower()
+    # 1. If known IMDb ID is provided (e.g. from TMDB)
+    if known_imdb_id and known_imdb_id.startswith('tt'):
+        rate, genres = query_cinemeta(known_imdb_id)
+        if rate is not None:
+            return rate, known_imdb_id, genres
+
+    # 2. Prepare title for search
+    raw_clean = re.sub(r'[/\\:_#-]+', ' ', title or '')
+    clean = re.sub(r'[^a-zA-Z0-9\s]+', ' ', raw_clean).strip().lower()
     q = re.sub(r'\s+', '_', clean)
     if not q:
         return None, None, []
 
-    try:
-        r = requests.get(f'https://v3.sg.media-imdb.com/suggestion/x/{q}.json', headers=headers, timeout=4)
-        if r.status_code == 200:
-            entries = r.json().get('d', [])
-            candidates = [item for item in entries if item.get('q') in ('feature', 'TV movie', 'movie', None)]
-            
-            # Helper to try candidate
-            def check_candidate(item):
-                imdb_id = item.get('id')
-                if imdb_id and imdb_id.startswith('tt'):
-                    try:
-                        r2 = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{imdb_id}.json', timeout=4)
-                        if r2.status_code == 200:
-                            meta = r2.json().get('meta', {})
-                            rate = meta.get('imdbRating')
-                            genres = meta.get('genres') or []
-                            if rate:
-                                return float(rate), imdb_id, genres
-                    except Exception:
-                        pass
-                return None, None, []
+    prefix = q[0] if q else 'x'
+    # Try titles endpoint first (filters out persons/cast), fallback to general suggestion
+    endpoints = [
+        f'https://v3.sg.media-imdb.com/suggestion/titles/{prefix}/{q}.json',
+        f'https://v3.sg.media-imdb.com/suggestion/{prefix}/{q}.json',
+        f'https://v3.sg.media-imdb.com/suggestion/x/{q}.json',
+    ]
 
-            # First pass: matching year within +/- 1
-            if year:
-                for item in candidates:
-                    item_year = item.get('y')
-                    if item_year:
-                        try:
-                            if abs(int(item_year) - int(year)) <= 1:
-                                rate, i_id, g_list = check_candidate(item)
-                                if rate is not None:
-                                    return rate, i_id, g_list
-                        except ValueError:
-                            pass
+    entries = []
+    for ep in endpoints:
+        try:
+            r = requests.get(ep, headers=headers, timeout=6)
+            if r.status_code == 200:
+                data = r.json().get('d', [])
+                if data:
+                    entries = data
+                    break
+        except Exception:
+            continue
 
-            # Second pass: best candidate without strict year matching
+    if not entries:
+        return None, None, []
+
+    # Filter for movie/media candidates with tt... IDs
+    candidates = [
+        item for item in entries
+        if item.get('id', '').startswith('tt')
+        and item.get('q') in ('feature', 'TV movie', 'movie', 'short', 'tvSeries', 'tvMiniSeries', None)
+    ]
+
+    # Helper to check a candidate
+    def check_candidate(item):
+        imdb_id = item.get('id')
+        if imdb_id and imdb_id.startswith('tt'):
+            rate, genres = query_cinemeta(imdb_id)
+            if rate is not None:
+                return rate, imdb_id, genres
+        return None, None, []
+
+    # Pass 1: exact or adjacent year match (within +/- 1 year)
+    if year:
+        try:
+            target_year = int(year)
             for item in candidates:
-                rate, i_id, g_list = check_candidate(item)
-                if rate is not None:
-                    return rate, i_id, g_list
-    except Exception:
-        pass
+                item_year = item.get('y')
+                if item_year:
+                    try:
+                        if abs(int(item_year) - target_year) <= 1:
+                            rate, i_id, g_list = check_candidate(item)
+                            if rate is not None:
+                                return rate, i_id, g_list
+                    except (ValueError, TypeError):
+                        pass
+        except (ValueError, TypeError):
+            pass
+
+    # Pass 2: best candidate without strict year matching
+    for item in candidates:
+        rate, i_id, g_list = check_candidate(item)
+        if rate is not None:
+            return rate, i_id, g_list
 
     return None, None, []
 

@@ -200,22 +200,29 @@ class BackgroundTaskManager:
             return False, "No active task is running."
 
         self.stop_requested.set()
-        self.append_log("Cancellation requested by administrator. Stopping task...")
+        self.append_log("[STOP] Cancellation requested by administrator. Halting background workers...")
         with self.state_lock:
             self.task_state['status'] = 'stopped'
             self.task_state['finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        return True, "Cancellation signal sent."
+        return True, "Cancellation signal sent. Workers are terminating."
+
+    def is_stop_requested(self) -> bool:
+        return self.stop_requested.is_set()
 
     def _run_task_wrapper(self, task_type: str, params: dict):
         try:
             connections.close_all()
             self._execute_task(task_type, params)
             with self.state_lock:
-                if self.task_state['status'] == 'running':
+                if self.stop_requested.is_set():
+                    self.task_state['status'] = 'stopped'
+                    self.task_state['finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    self.append_log("[STOPPED] Task was stopped by administrator.")
+                elif self.task_state['status'] == 'running':
                     self.task_state['status'] = 'completed'
                     self.task_state['progress_percent'] = 100.0
                     self.task_state['finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            self.append_log("[SUCCESS] Task completed successfully!")
+                    self.append_log("[SUCCESS] Task completed successfully!")
         except Exception as e:
             import traceback
             err = str(e)
@@ -329,6 +336,10 @@ class BackgroundTaskManager:
         # Group copies by group_key
         groups = {}
         for idx, m in enumerate(movies):
+            if self.stop_requested.is_set():
+                stream.write("[STOPPED] Regrouping cancelled by user.")
+                return
+
             if idx % 1000 == 0:
                 pct = round((idx / total) * 100, 1)
                 stream.write(f"[{idx}/{total} ({pct}%)] Grouping movies...")
@@ -384,3 +395,9 @@ class BackgroundTaskManager:
 
 
 task_manager = BackgroundTaskManager()
+
+
+def is_task_stopped() -> bool:
+    """Helper to check if the active background task has received a cancellation signal."""
+    return task_manager.stop_requested.is_set()
+
