@@ -15,25 +15,9 @@
 
 ---
 
-```
-  ┌─────────────────────────────────────────────────────────────────────────────┐
-  │  🎬 CineVerse                                     ⚙️ Management  🔒 Admin   │
-  ├─────────────────────────────────────────────────────────────────────────────┤
-  │  [ 🔍 Search titles, directors, actors... ] [ ⭐ Min IMDb ] [ 🎭 All Genres ] │
-  │                                                                             │
-  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  │
-  │  │               │  │               │  │               │  │               │  │
-  │  │     POSTER    │  │     POSTER    │  │     POSTER    │  │     POSTER    │  │
-  │  │               │  │               │  │               │  │               │  │
-  │  │  ▶ Play LAN   │  │  ▶ Play LAN   │  │  ▶ Play LAN   │  │  ▶ Play LAN   │  │
-  │  ├───────────────┤  ├───────────────┤  ├───────────────┤  ├───────────────┤  │
-  │  │ Dune: Part II │  │   Inception   │  │  Interstellar │  │  Spider-Verse │  │
-  │  │ [2024][⏱️2h46m]│  │ [2010][⏱️2h28m]│  │ [2014][⏱️2h49m]│  │ [2023][⏱️2h20m]│  │
-  │  │ [★ 8.6][Sci-Fi]│  │ [★ 8.8][Action]│  │ [★ 8.7][Sci-Fi]│  │ [★ 8.7][Anim]  │  │
-  │  │ [ ℹ️ Details ] │  │ [ ℹ️ Details ] │  │ [ ℹ️ Details ] │  │ [ ℹ️ Details ] │  │
-  │  └───────────────┘  └───────────────┘  └───────────────┘  └───────────────┘  │
-  └─────────────────────────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/screenshots/hero_catalog.png" alt="CineVerse Obsidian Cinema Interface" width="100%">
+</p>
 
 ---
 
@@ -83,28 +67,21 @@ python manage.py runserver
 | 🔒 **Tamper-Proof Admin Auth** | Visitors browse & stream freely, while `/manage/` operations require staff login. |
 | 🛠️ **Web Management Studio** | Live task console with animated progress, streaming logs, and 1-click catalog reset. |
 
+<p align="center">
+  <img src="docs/screenshots/movie_detail_modal.png" alt="Movie Details Modal with Trailer" width="64%">
+  &nbsp;
+  <img src="docs/screenshots/mobile_responsive.png" alt="Mobile Responsive UI" width="32%">
+</p>
+
 ---
 
 ## 🛠️ Management & Maintenance Studio (`/manage/`)
 
 Access the management dashboard by clicking **⚙️ Management** (or sign in via `/admin/login/?next=/manage/`):
 
-```
-  ┌───────────────────────────────────────────────────────────────────────────┐
-  │  ⚙️ Management Studio                                                     │
-  │  [ Tab 1: Health Overview ] [ Tab 2: Operations ] [ Tab 3: Console ] ...   │
-  ├───────────────────────────────────────────────────────────────────────────┤
-  │  📊 Catalog Health:  Total Files: 520 | Unique: 380 | Posters: 98%        │
-  │  ⚡ Quick Hub:        [ Fix Missing Posters ]  [ Sync IMDb ]  [ Genres ]   │
-  │                                                                           │
-  │  🔧 Maintenance Routines:                                                 │
-  │     1. Fetch Missing Posters & Extended Details (TMDB Multi-Pass)        │
-  │     2. Concurrent Multi-Threaded Genre Resolver                          │
-  │     3. IMDb Ratings & Canonical IDs Sync                                 │
-  │     4. Recalculate Deduplication Copy Groups & Primary Flags              │
-  │     5. 🗑️ Reset Catalog & Start Fresh (Wipe & Import your own media)     │
-  └───────────────────────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/screenshots/manage_studio.png" alt="CineVerse Management & Maintenance Studio" width="100%">
+</p>
 
 ---
 
