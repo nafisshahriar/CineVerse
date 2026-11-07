@@ -159,6 +159,7 @@ class BackgroundTaskManager:
             'backfill_metadata': 'Backfill Missing Metadata',
             'regroup_copies': 'Recalculate Groups & Primary Copies',
             'update_all': 'Full Automated Pipeline',
+            'reset_catalog': 'Reset Catalog & Start Fresh',
         }
 
         task_name = task_names.get(task_type, f"Task: {task_type}")
@@ -319,6 +320,13 @@ class BackgroundTaskManager:
 
         elif task_type == 'update_all':
             call_command('update_all', stdout=out_stream, stderr=out_stream)
+
+        elif task_type == 'reset_catalog':
+            crawl_url = params.get('crawl_url', '').strip() or None
+            kwargs = {'yes': True, 'stdout': out_stream, 'stderr': out_stream}
+            if crawl_url:
+                kwargs['crawl'] = crawl_url
+            call_command('reset_catalog', **kwargs)
 
         else:
             raise ValueError(f"Unknown task type: {task_type}")

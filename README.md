@@ -10,233 +10,172 @@
 
 # 🎬 CineVerse
 
-> **Self-Hosted Cinema Streaming Frontend & Catalog Management Studio for Private Networks, Home Labs, NAS, and H5AI Directory Listings.**
-
-Turn raw folder indexes and private network storage into a modern, cinematic personal streaming web application. CineVerse crawls your local or remote H5AI/HTTP directory listings, parses scene release file names, enriches them with high-definition TMDB metadata, syncs authentic IMDb ratings, groups duplicate copies across servers, and provides a protected web management studio.
-
----
-
-## 🌟 Why CineVerse?
-
-If you maintain a home media collection, run a NAS, use a local seedbox, or access community FTP/H5AI servers over local ISP/BDIX networks, browsing raw file lists in a browser is clunky and uninspiring:
-
-- ❌ Bare folder listings with cryptic filenames (`Inception.2010.1080p.BluRay.x264-SPARKS.mkv`)
-- ❌ No posters, backdrops, plot summaries, genres, or cast info
-- ❌ No search, filtering by genre, resolution, or authentic IMDb rating
-- ❌ Cluttered duplicate files across multiple storage servers
-
-**CineVerse solves this completely:**
-- ✨ **Netflix-grade Obsidian Dark Cinema UI** with high-resolution posters, backdrops, cast galleries, and direct in-browser streaming links.
-- ⚡ **Multi-Pass Matching Engine** that accurately parses release filenames and bonds canonical TMDB metadata and IMDb ratings (`tt...`).
-- 🔒 **Tamper-Proof Access Control** protecting the Management Studio (`/manage/`) so public visitors can browse without altering catalog data.
-- 🛠️ **Dedicated Web Management Studio (`/manage/`)** to monitor catalog health, run background crawlers with live streaming terminal logs, and perform 1-click single-movie metadata repairs.
-- 📀 **Multi-Source Copy Deduplication** that bundles duplicates across servers into 1 sleek movie card with a copy picker.
-- 🔄 **Automated CI/CD Pipeline** with GitHub Actions validation and zero-maintenance cloud deployment.
+> **Turn raw folder indexes and private storage into a personal cinema streaming web app.**  
+> Built for Home Labs, NAS, Seedboxes, Local ISP/BDIX FTP, and H5AI Directory Listings.
 
 ---
-
-## ✨ Feature Highlights
-
-| Feature | Description |
-|---|---|
-| **🔒 Public Protection & Admin Auth** | The public can view, search, and stream movies, but the Management Studio (`/manage/`) and editing APIs are locked behind staff authentication. |
-| **🛠️ Management Studio (`/manage/`)** | Web dashboard to trigger background syncs, monitor task progress with live percentage/ETA, inspect catalog health, and repair single-movie metadata on the fly. |
-| **⭐ Authentic IMDb Ratings** | Uses canonical IMDb ID resolution and Cinemeta synchronization. Eliminates 1-vote 10.0 biases so "Highest Rated" reflects true world cinema classics. |
-| **🎯 Multi-Pass TMDB Engine** | 4-pass search heuristic featuring adjacent-year (`±1`) tolerance for film festivals vs. theatrical releases, scene tag sanitization, and candidate proximity sorting. |
-| **📀 Copy Deduplication** | Automatically groups duplicate releases (1080p, 4K, multiple FTP servers) into 1 card with a copy switcher and direct playback URLs in the detail modal. |
-| **🎨 Obsidian Dark Cinema UI** | Sleek charcoal glassmorphic surfaces, sapphire accents, warm star badges, and keyboard navigation. |
-| **⚡ Sustainable Metrics** | Supports TMDB Changes API to refresh only recently modified titles, saving over 95% of API quota calls. |
-| **🔍 Real-Time Filter & Search** | Instant AJAX searching across titles, actors, directors; filter by language, server source, resolution (4K/1080p/720p), genre, and rating. |
-| **🔢 Smart Pagination** | Windowed page navigation (`1 ... 14, 15, 16 ... 374`) with instant "Jump to Page" input and browser history (`popstate`) preservation. |
-| **🚀 Automated CI/CD** | GitHub Actions testing matrix across Python 3.11 & 3.12 with automated zero-maintenance deployment. |
-| **🐳 Docker & Compose** | Pre-configured container setup for 1-command deployment on Unraid, TrueNAS, Portainer, or Raspberry Pi. |
-
----
-
-## 🔒 Security: Public Protection & Admin Access Control
-
-When CineVerse is deployed online, public visitors can browse the movie catalog, search, filter, and stream, but **cannot modify your library or trigger maintenance jobs**:
-
-1. **Guest Mode (Public Visitors)**:
-   - Browse the catalog, search, filter, view synopses, and watch streams.
-   - Maintenance buttons, console links, and the inline "Edit Year / ID" modal strip are hidden.
-   - Direct requests to `/manage/` redirect to the admin login.
-   - Any unauthenticated calls to `/manage/api/...` receive `403 Forbidden`.
-2. **Admin Mode (Staff Login)**:
-   - Click **Admin Login** in the top navbar (or visit `/admin/login/?next=/manage/`).
-   - Full access to the Management Studio, background crawlers, single-movie repairs, and delete actions.
-3. **Automated Admin Creation**:
-   Set `DJANGO_SUPERUSER_USERNAME` and `DJANGO_SUPERUSER_PASSWORD` in your cloud environment variables. CineVerse automatically creates or updates your administrator account upon deployment without requiring shell access.
-
----
-
-## ⚡ CI/CD Pipeline (Continuous Integration & Continuous Deployment)
-
-CineVerse includes a preconfigured GitHub Actions workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
 
 ```
- Git Push (main) ───► [ CI: Test & Lint ] ───► [ CD: Automated Deploy ] ───► Live Production
-                      ├── Python 3.11 & 3.12   └── Trigger Render Hook      (Render.com / Fly)
-                      ├── Django System Check
-                      ├── Migration Verification
-                      └── 14 Automated Tests
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │  🎬 CineVerse                                     ⚙️ Management  🔒 Admin   │
+  ├─────────────────────────────────────────────────────────────────────────────┤
+  │  [ 🔍 Search titles, directors, actors... ] [ ⭐ Min IMDb ] [ 🎭 All Genres ] │
+  │                                                                             │
+  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  │
+  │  │               │  │               │  │               │  │               │  │
+  │  │     POSTER    │  │     POSTER    │  │     POSTER    │  │     POSTER    │  │
+  │  │               │  │               │  │               │  │               │  │
+  │  │  ▶ Play LAN   │  │  ▶ Play LAN   │  │  ▶ Play LAN   │  │  ▶ Play LAN   │  │
+  │  ├───────────────┤  ├───────────────┤  ├───────────────┤  ├───────────────┤  │
+  │  │ Dune: Part II │  │   Inception   │  │  Interstellar │  │  Spider-Verse │  │
+  │  │ [2024][⏱️2h46m]│  │ [2010][⏱️2h28m]│  │ [2014][⏱️2h49m]│  │ [2023][⏱️2h20m]│  │
+  │  │ [★ 8.6][Sci-Fi]│  │ [★ 8.8][Action]│  │ [★ 8.7][Sci-Fi]│  │ [★ 8.7][Anim]  │  │
+  │  │ [ ℹ️ Details ] │  │ [ ℹ️ Details ] │  │ [ ℹ️ Details ] │  │ [ ℹ️ Details ] │  │
+  │  └───────────────┘  └───────────────┘  └───────────────┘  └───────────────┘  │
+  └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1. Continuous Integration (CI)
-Runs on every push and pull request to `main`:
-- **Python Matrix**: Tests on both Python 3.11 and 3.12.
-- **Django Check**: Verifies settings, templates, and application configurations (`python manage.py check`).
-- **Migration Drift Check**: Ensures all model changes have committed migration files (`python manage.py makemigrations --check --dry-run`).
-- **Test Suite**: Executes model tests, filename parsing tests, search queries, and management security assertions (`python manage.py test`).
-
-### 2. Continuous Deployment (CD)
-When CI tests pass on `main`:
-- Automatically triggers a deployment signal to your cloud host (e.g. Render Deploy Hook).
-- If using Render's native GitHub integration, Render automatically pulls the latest commit and runs [`build.sh`](build.sh).
-
 ---
 
-## ☁️ Zero-Maintenance Free Cloud Deployment Guide
+## ⚡ 3-Step Quickstart (Start Fresh with Your Own Media)
 
-Want CineVerse running 24/7 without keeping your personal computer or laptop on? Deploy to **[Render.com](https://render.com/)** on their 100% Free Web Service tier:
-
-### Step 1: Create a Render Web Service
-1. Sign up for a free account at [render.com](https://render.com/).
-2. Click **New +** → **Web Service**.
-3. Connect your GitHub repository: `yourusername/CineVerse`.
-4. Configure the service settings:
-   - **Name**: `cineverse`
-   - **Environment**: `Python 3`
-   - **Region**: Choose the closest region to your users.
-   - **Branch**: `main`
-   - **Build Command**: `./build.sh` (or `pip install -r requirements.txt && python manage.py collectstatic --no-input && python manage.py migrate --no-input && python manage.py ensure_admin`)
-   - **Start Command**: `gunicorn moviedash.wsgi:application`
-   - **Plan Type**: `Free`
-
-### Step 2: Configure Environment Variables
-In the Render dashboard under **Environment**, add:
-
-| Key | Value | Description |
-|---|---|---|
-| `DJANGO_SECRET_KEY` | *(generate a long random string)* | Cryptographic signing key |
-| `DJANGO_DEBUG` | `False` | Run in production mode |
-| `DJANGO_ALLOWED_HOSTS` | `*` (or `your-app.onrender.com`) | Host header validation |
-| `MANAGE_REQUIRE_AUTH` | `True` | Lock down the `/manage/` dashboard |
-| `DJANGO_SUPERUSER_USERNAME` | `admin` | Your admin username |
-| `DJANGO_SUPERUSER_PASSWORD` | *(your strong password)* | Your admin login password |
-| `TMDB_API_KEY` | *(your TMDB API key)* | Free key from [TMDB](https://www.themoviedb.org/settings/api) |
-| `DATABASE_URL` | *(optional)* | External PostgreSQL URL (e.g. Supabase/Neon) |
-
-### Step 3: Connect CI/CD (Optional Render Deploy Hook)
-1. In Render, go to **Settings** → **Deploy Hook** and copy the URL.
-2. In your GitHub repository, go to **Settings** → **Secrets and variables** → **Actions**.
-3. Create a repository secret named `RENDER_DEPLOY_HOOK_URL` and paste the URL.
-4. Now, every time you push to `main`, GitHub Actions validates your code and deploys it automatically!
-
----
-
-## 🌐 Private Media & Torrent Access Architecture
-
-If your video files are hosted on a private network (e.g. `172.16.x.x`, local NAS, BDIX FTP, torrent seedbox):
-
-- **Browser Direct Streaming**: When a user clicks to play a video file, the stream URL is loaded directly by their web browser. If their device is on the local network (or connected via VPN), the video plays directly from the local server at full LAN speed, even if the CineVerse frontend is hosted on Render!
-- **Cloudflare Tunnel (`cloudflared`) Alternative**: If you prefer self-hosting on a home lab PC or Raspberry Pi with zero port forwarding, run:
-  ```bash
-  cloudflared tunnel --url http://localhost:8000
-  ```
-  This securely publishes your local instance to a free HTTPS domain without exposing your home IP.
-
----
-
-## 🚀 Local Development Setup
-
+### 1. Clone & Install
 ```bash
-# 1. Clone & create virtual environment
 git clone https://github.com/nafisshahriar/CineVerse.git
 cd CineVerse
 python -m venv .venv
 
-# Windows
-.venv\Scripts\activate
-# Linux/macOS
-source .venv/bin/activate
-
-# 2. Install dependencies
+# Windows: .venv\Scripts\activate | Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
-
-# 3. Setup environment variables
 cp .env.example .env
-# Edit .env with your TMDB_API_KEY and credentials
+```
+*(Get a free TMDB API key from [themoviedb.org](https://www.themoviedb.org/settings/api) and set `TMDB_API_KEY` in `.env`)*
 
-# 4. Run migrations and auto-create admin
-python manage.py migrate
-python manage.py ensure_admin
+### 2. Start with a Clean, Fresh Database
+Wipe demo records and start with an empty database:
+```bash
+python manage.py reset_catalog --yes
+```
+
+### 3. Populate with Your Media & Run
+Import your media from your H5AI server, NAS, or HTTP directory listing:
+```bash
+# Crawl directory, match TMDB posters, backdrops, and sync authentic IMDb ratings:
+python manage.py update_all --url "http://your-nas-or-h5ai-server/movies/"
+
+# Launch CineVerse
 python manage.py runserver
 ```
+👉 Open **`http://localhost:8000`** in your browser!
 
 ---
 
-## 🛠️ Management Commands
+## ✨ Features at a Glance
+
+| Feature | Highlight |
+|---|---|
+| 🎨 **Obsidian Cinema UI** | Netflix-grade dark glass theme, responsive on Mobile, Tablet & Desktop. |
+| 🎬 **In-Modal YouTube Trailers** | Integrated 16:9 trailer player inside the movie details dialog. |
+| ⭐ **Authentic IMDb Ratings** | True canonical IMDb ratings & IDs (`tt...`) via Cinemeta to prevent vote bias. |
+| ⏱️ **Runtime & Release Year** | Clean card metadata pills showing `[2024] [⏱️ 2h 46m] [★ 8.6] [Sci-Fi]`. |
+| 🌐 **True Native Language** | Displays authentic TMDB/IMDb movie language (never corrupted by folder names). |
+| 📀 **Copy Deduplication** | Bundles 4K, 1080p, and multi-server duplicates into 1 card with a copy switcher. |
+| 🔒 **Tamper-Proof Admin Auth** | Visitors browse & stream freely, while `/manage/` operations require staff login. |
+| 🛠️ **Web Management Studio** | Live task console with animated progress, streaming logs, and 1-click catalog reset. |
+
+---
+
+## 🛠️ Management & Maintenance Studio (`/manage/`)
+
+Access the management dashboard by clicking **⚙️ Management** (or sign in via `/admin/login/?next=/manage/`):
+
+```
+  ┌───────────────────────────────────────────────────────────────────────────┐
+  │  ⚙️ Management Studio                                                     │
+  │  [ Tab 1: Health Overview ] [ Tab 2: Operations ] [ Tab 3: Console ] ...   │
+  ├───────────────────────────────────────────────────────────────────────────┤
+  │  📊 Catalog Health:  Total Files: 520 | Unique: 380 | Posters: 98%        │
+  │  ⚡ Quick Hub:        [ Fix Missing Posters ]  [ Sync IMDb ]  [ Genres ]   │
+  │                                                                           │
+  │  🔧 Maintenance Routines:                                                 │
+  │     1. Fetch Missing Posters & Extended Details (TMDB Multi-Pass)        │
+  │     2. Concurrent Multi-Threaded Genre Resolver                          │
+  │     3. IMDb Ratings & Canonical IDs Sync                                 │
+  │     4. Recalculate Deduplication Copy Groups & Primary Flags              │
+  │     5. 🗑️ Reset Catalog & Start Fresh (Wipe & Import your own media)     │
+  └───────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## ☁️ 1-Click Free Cloud Deployment (Render.com)
+
+Deploy CineVerse for **free 24/7** without keeping your personal computer running:
+
+1. Fork or push this repository to your GitHub.
+2. Sign up at **[Render.com](https://render.com/)** and click **New +** → **Web Service**.
+3. Select your `CineVerse` repo with:
+   - **Environment**: `Python 3`
+   - **Build Command**: `./build.sh`
+   - **Start Command**: `gunicorn moviedash.wsgi:application`
+4. Under **Environment Variables**, add:
+
+| Key | Recommended Value | Purpose |
+|---|---|---|
+| `DJANGO_SECRET_KEY` | *(random 50-char string)* | Django cryptographic security |
+| `DJANGO_DEBUG` | `False` | Production mode |
+| `DJANGO_ALLOWED_HOSTS` | `*` | Host header validation |
+| `MANAGE_REQUIRE_AUTH` | `True` | Protects `/manage/` with admin login |
+| `DJANGO_SUPERUSER_USERNAME` | `admin` | Your admin username |
+| `DJANGO_SUPERUSER_PASSWORD` | *(your strong password)* | Your admin password |
+| `TMDB_API_KEY` | *(your TMDB API key)* | Free metadata & poster lookup |
+
+---
+
+## 🌐 Private Media & LAN Streaming Architecture
+
+If your media files reside on a private local network (e.g. NAS, 172.16.x.x, local ISP FTP, or Seedbox):
+
+```
+ [ Your Phone / Tablet / TV / PC ]
+        │
+        ├───── 1. Loads UI & Metadata (HTTPS) ─────► [ CineVerse Web App ]
+        │                                             (Render.com or Cloud)
+        │
+        └───── 2. Streams Video File (Direct LAN) ──► [ Local Media Server ]
+                                                      (NAS / H5AI / FTP)
+```
+
+- **Zero Bandwidth Overhead**: CineVerse does not proxy large video files through the web host.
+- **Full LAN Speed**: When you tap ▶ Play, the browser opens the stream URL directly from your local storage at full Gigabit/Wi-Fi speed.
+
+---
+
+## 🛠️ Essential CLI Commands
 
 ```bash
-# Full Pipeline: Crawl directory, enrich TMDB metadata, fetch credits
-python manage.py update_all --url "http://your-server/movies/"
+# 1. Reset database to start fresh with your own media library
+python manage.py reset_catalog --yes
 
-# Sync Authentic IMDb Ratings (Concurrent Multi-Threaded)
-python manage.py fetch_imdb_ratings --all --workers 16
+# 2. Reset and immediately crawl a media server
+python manage.py reset_catalog --yes --crawl "http://your-nas/movies/"
 
-# Backfill and Normalize Genres across all titles
-python manage.py fetch_genres --all --workers 16
+# 3. Import movies and automatically enrich posters & metadata
+python manage.py update_all --url "http://your-nas/movies/"
 
-# Sustainable Refresh (TMDB Changes API - saves 95%+ calls)
-python manage.py refresh_metadata --changes --days 7
+# 4. Multi-threaded IMDb rating resolution (fast & keyless)
+python manage.py fetch_imdb_ratings --all --workers 8
 
-# Ensure Admin User Exists (reads from env vars or arguments)
-python manage.py ensure_admin --username admin --password "secret"
+# 5. Populate and normalize genre tags across all titles
+python manage.py fetch_genres --all --workers 8
+
+# 6. Create / update admin credentials without shell access
+python manage.py ensure_admin --username admin --password "MySecretPass123"
 ```
 
 ---
 
-## 📁 Project Architecture
+## 📄 License & Disclaimer
 
-```
-CineVerse/
-├── .github/workflows/          # CI/CD Workflows
-│   └── ci.yml                  # Matrix testing, linting, and deploy hook
-├── moviedash/                  # Django project root
-│   ├── settings.py             # Security, Whitenoise, and database config
-│   ├── urls.py                 # Core routing
-│   └── wsgi.py                 # WSGI application entry
-├── movies/                     # Main cinema application
-│   ├── models.py               # Movie, MovieDetail, CrawledDirectory models
-│   ├── views.py                # Protected Management views & public APIs
-│   ├── services.py             # Multi-pass TMDB matching & Cinemeta sync
-│   ├── task_runner.py          # Asynchronous background job engine
-│   ├── tests.py                # 14 automated unit & security tests
-│   ├── utils.py                # Scene filename parsers & H5AI crawlers
-│   ├── management/commands/    # CLI management commands (update_all, etc.)
-│   └── templates/movies/       # Obsidian dark templates (index, manage)
-├── build.sh                    # Zero-config cloud build script (Render/Fly)
-├── Dockerfile                  # Container build recipe
-├── docker-compose.yml          # Container orchestration recipe
-├── requirements.txt            # Python dependencies (Django, Whitenoise, etc.)
-├── Procfile                    # Cloud platform process manager
-└── LICENSE                     # MIT Open Source License
-```
-
----
-
-## ⚖️ Legal Disclaimer
-
-CineVerse is an open-source personal media catalog organizer and web presentation layer (similar to Kodi, Jellyfin, or Radarr).
-
-- **No Media Hosting:** CineVerse does **not** host, store, index, scrape, or distribute any video files, torrents, or pirated media.
-- **User Ownership:** All media stream links are strictly defined by the user through their own privately configured directory listings or local network servers.
-- **Metadata Sources:** Metadata and posters are retrieved via third-party APIs (The Movie Database TMDB and Cinemeta/IMDb) in compliance with their respective developer terms.
-
----
-
-## 📄 License
-
-This project is open-source and released under the terms of the [MIT License](LICENSE).  
-Copyright (c) 2024-2026 **S. M. Nafis Shahriar**.
+- **Open Source:** Released under the permissive **[MIT License](LICENSE)**.
+- **Media Notice:** CineVerse is a personal catalog organizer (similar to Plex, Jellyfin, or Radarr). It does **not** host, store, or distribute video files. Stream URLs are defined entirely by the user.

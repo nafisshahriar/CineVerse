@@ -378,3 +378,20 @@ class ManagementSecurityTests(TestCase):
         self.assertNotIn("res-badge", html)
         self.assertNotIn("source-badge", html)
         self.assertNotIn("Dhaka-Flix 14", html)
+
+    def test_reset_catalog_command(self):
+        import io
+        from django.core.management import call_command
+        m = Movie.objects.create(
+            title="Sample Movie 2020",
+            clean_title="Sample Movie",
+            year=2020,
+            file_url="http://example.com/sample.mp4"
+        )
+        MovieDetail.objects.create(movie=m, overview="Sample overview")
+        self.assertTrue(Movie.objects.filter(pk=m.id).exists())
+
+        out = io.StringIO()
+        call_command('reset_catalog', yes=True, stdout=out)
+        self.assertEqual(Movie.objects.count(), 0)
+        self.assertEqual(MovieDetail.objects.count(), 0)
