@@ -8,6 +8,11 @@
       <div class="no-poster">
         <span class="no-poster-icon">🎬</span>
         <span class="no-poster-text">No Poster</span>
+        <button class="btn-card-find-poster" type="button" 
+          onclick="event.preventDefault(); event.stopPropagation(); quickFetchCardPoster(this, {{ movie.id }})" 
+          title="Search TMDB to fetch poster & metadata">
+          <span class="btn-icon">🔍</span> Fetch Poster
+        </button>
       </div>
       {% endif %}
       
@@ -21,6 +26,10 @@
     <h2 class="title" title="{{ movie.display_title }}">{{ movie.display_title }}</h2>
     
     <div class="card-meta-row">
+      {% if movie.year %}
+      <span class="card-pill card-year" title="Release Year">{{ movie.year }}</span>
+      {% endif %}
+
       {% if movie.runtime_display %}
       <span class="card-pill card-runtime" title="Runtime">
         <span class="pill-icon">⏱️</span>{{ movie.runtime_display }}

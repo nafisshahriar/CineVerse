@@ -368,7 +368,9 @@ class ManagementSecurityTests(TestCase):
             file_url="http://example.com/dune.mkv"
         )
         html = render_to_string('movies/_movie_cards.html', {'movies': [m]})
-        # Must contain runtime, imdb rating, and primary genre
+        # Must contain year, runtime, imdb rating, and primary genre
+        self.assertIn("card-year", html)
+        self.assertIn("2024", html)
         self.assertIn("2h 46m", html)
         self.assertIn("8.6", html)
         self.assertIn("Sci-Fi", html)

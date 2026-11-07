@@ -681,6 +681,21 @@
                   posterWrap.replaceChild(img, noPoster);
                 }
               }
+              if (data.movie.year) {
+                let yBadge = card.querySelector('.card-year');
+                if (yBadge) {
+                  yBadge.textContent = data.movie.year;
+                } else {
+                  const metaRow = card.querySelector('.card-meta-row');
+                  if (metaRow) {
+                    const newY = document.createElement('span');
+                    newY.className = 'card-pill card-year';
+                    newY.title = 'Release Year';
+                    newY.textContent = data.movie.year;
+                    metaRow.prepend(newY);
+                  }
+                }
+              }
               if (data.movie.imdb_rating) {
                 let ratingBadge = card.querySelector('.card-imdb');
                 if (ratingBadge) {
@@ -763,6 +778,21 @@
                   img.src = data.movie.poster_url;
                   img.className = 'fade-in-poster';
                   posterWrap.replaceChild(img, noPoster);
+                }
+              }
+              if (data.movie.year) {
+                let yBadge = card.querySelector('.card-year');
+                if (yBadge) {
+                  yBadge.textContent = data.movie.year;
+                } else {
+                  const metaRow = card.querySelector('.card-meta-row');
+                  if (metaRow) {
+                    const newY = document.createElement('span');
+                    newY.className = 'card-pill card-year';
+                    newY.title = 'Release Year';
+                    newY.textContent = data.movie.year;
+                    metaRow.prepend(newY);
+                  }
                 }
               }
               if (data.movie.imdb_rating) {
