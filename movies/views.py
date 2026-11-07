@@ -328,14 +328,46 @@ def movie_detail_ajax(request, movie_id):
         detail = None
 
     needs_fetch = not detail or not detail.tmdb_id or (not detail.cast and not detail.director)
+    if movie.imdb_id and detail and detail.imdb_id != movie.imdb_id:
+        needs_fetch = True
 
     search_title = movie.clean_title or movie.title
     if needs_fetch:
-        extended = tmdb_service.get_extended_details(search_title, movie.year_str or '')
+        extended = tmdb_service.get_extended_details(
+            search_title, movie.year_str or '', imdb_id=movie.imdb_id or ''
+        )
 
         if extended:
             if not detail:
                 detail = MovieDetail(movie=movie)
+
+            # Sync official clean title, year, poster, runtime to movie if resolved
+            movie_updates = {}
+            if extended.get('title') and (not movie.clean_title or movie.clean_title == movie.title):
+                movie.clean_title = extended['title']
+                movie_updates['clean_title'] = extended['title']
+            if extended.get('release_date') and len(extended['release_date']) >= 4 and extended['release_date'][:4].isdigit():
+                ext_yr = int(extended['release_date'][:4])
+                if not movie.year or movie.year != ext_yr:
+                    movie.year = ext_yr
+                    movie.year_str = str(ext_yr)
+                    movie_updates['year'] = ext_yr
+                    movie_updates['year_str'] = str(ext_yr)
+            elif extended.get('year') and (not movie.year or movie.year != extended['year']):
+                movie.year = extended['year']
+                movie.year_str = str(extended['year'])
+                movie_updates['year'] = extended['year']
+                movie_updates['year_str'] = str(extended['year'])
+            if extended.get('poster_url') and not movie.poster_url:
+                movie.poster_url = extended['poster_url']
+                movie_updates['poster_url'] = extended['poster_url']
+            if extended.get('runtime') and not movie.runtime:
+                movie.runtime = extended['runtime']
+                movie_updates['runtime'] = extended['runtime']
+            if movie_updates:
+                movie.save(update_fields=list(movie_updates.keys()))
+                if movie.group_key:
+                    Movie.objects.filter(group_key=movie.group_key).update(**movie_updates)
 
             detail.tmdb_id = extended.get('tmdb_id')
             detail.overview = extended.get('overview', '')
@@ -343,7 +375,7 @@ def movie_detail_ajax(request, movie_id):
             detail.runtime = extended.get('runtime')
             detail.backdrop_url = extended.get('backdrop_url')
             detail.tagline = extended.get('tagline', '')
-            detail.imdb_id = extended.get('imdb_id', '')
+            detail.imdb_id = movie.imdb_id or extended.get('imdb_id', '')
             detail.original_language = extended.get('original_language', '')
             detail.budget = extended.get('budget')
             detail.revenue = extended.get('revenue')
@@ -358,7 +390,7 @@ def movie_detail_ajax(request, movie_id):
                 try:
                     from datetime import datetime
                     detail.release_date = datetime.strptime(
-                        extended['release_date'], '%Y-%m-%d'
+                        str(extended['release_date'])[:10], '%Y-%m-%d'
                     ).date()
                 except ValueError:
                     pass
@@ -492,11 +524,38 @@ def movie_refresh_ajax(request, movie_id):
     Public on-demand metadata & IMDb rating fetch/refresh for a single movie.
     Safe, non-destructive, and accessible without administrator login.
     Enriches TMDB poster, backdrop, runtime, trailer, and authentic IMDb rating.
+    Accepts optional {imdb_id, year} in POST body to override before fetching.
     """
     if request.method not in ('POST', 'GET'):
         return JsonResponse({'success': False, 'message': 'Method not allowed'}, status=405)
 
     movie = get_object_or_404(Movie, pk=movie_id)
+
+    # Allow optional manual imdb_id or year passed in request body
+    if request.body:
+        try:
+            body_data = json.loads(request.body.decode('utf-8'))
+            from movies.utils import normalize_imdb_id
+            raw_id = body_data.get('imdb_id', '').strip()
+            clean_id = normalize_imdb_id(raw_id) if raw_id else ''
+            if clean_id:
+                movie.imdb_id = clean_id
+                movie.save(update_fields=['imdb_id'])
+                if movie.group_key:
+                    Movie.objects.filter(group_key=movie.group_key).update(imdb_id=clean_id)
+            if body_data.get('year'):
+                try:
+                    y = int(body_data['year'])
+                    movie.year = y
+                    movie.year_str = str(y)
+                    movie.save(update_fields=['year', 'year_str'])
+                    if movie.group_key:
+                        Movie.objects.filter(group_key=movie.group_key).update(year=y, year_str=str(y))
+                except (ValueError, TypeError):
+                    pass
+        except Exception:
+            pass
+
     from movies.services import enrich_movie_metadata
     success, res_data = enrich_movie_metadata(movie, include_details=True)
 
@@ -797,35 +856,49 @@ def manage_movie_action_api(request, movie_id):
             }, status=403)
 
     if action == 'update_ids':
-        imdb_id = data.get('imdb_id', '').strip()
+        from movies.utils import normalize_imdb_id
+        raw_imdb = data.get('imdb_id', '').strip()
+        clean_imdb = normalize_imdb_id(raw_imdb) if raw_imdb else ''
+        imdb_id = clean_imdb or raw_imdb
         imdb_rating = data.get('imdb_rating')
         clean_title = data.get('clean_title', '').strip()
         year = data.get('year')
         genres = data.get('genres', '').strip()
         poster_url = data.get('poster_url', '').strip()
 
+        group_updates = {}
         if imdb_id:
             movie.imdb_id = imdb_id
+            group_updates['imdb_id'] = imdb_id
         if imdb_rating is not None and imdb_rating != '':
             try:
                 movie.imdb_rating = float(imdb_rating)
+                group_updates['imdb_rating'] = movie.imdb_rating
             except ValueError:
                 pass
         if clean_title:
             movie.clean_title = clean_title
+            group_updates['clean_title'] = clean_title
         if year:
             try:
                 movie.year = int(year)
                 movie.year_str = str(year)
+                group_updates['year'] = movie.year
+                group_updates['year_str'] = movie.year_str
             except ValueError:
                 pass
         if genres:
             movie.genres = genres
+            group_updates['genres'] = genres
         if poster_url:
             movie.poster_url = poster_url
             movie.metadata_status = 'ok'
+            group_updates['poster_url'] = poster_url
+            group_updates['metadata_status'] = 'ok'
 
         movie.save()
+        if movie.group_key and group_updates:
+            Movie.objects.filter(group_key=movie.group_key).update(**group_updates)
 
         if data.get('refetch'):
             from movies.services import enrich_movie_metadata

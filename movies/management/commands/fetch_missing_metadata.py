@@ -59,6 +59,7 @@ class Command(BaseCommand):
                 'display_title': m.display_title,
                 'year': m.year,
                 'genres': m.genres,
+                'imdb_id': m.imdb_id,
                 'group_key': m.group_key,
             }
             for m in movies
@@ -81,10 +82,63 @@ class Command(BaseCommand):
             clean_t = item['clean_title']
             year_str = str(item['year']) if item['year'] else ''
 
+            from movies.utils import normalize_imdb_id, fetch_cinemeta_details
+            clean_imdb = normalize_imdb_id(item.get('imdb_id'))
+
+            res = None
+            if clean_imdb:
+                res = tmdb_service.find_by_imdb_id(clean_imdb)
+
             # Robust multi-pass TMDB lookup (with/without year, track stripping, symbol stripping)
-            res = tmdb_service.search_movie_multipass(clean_t, year_str)
+            if not res:
+                res = tmdb_service.search_movie_multipass(clean_t, year_str)
             if not res and item['title'] and item['title'] != clean_t:
                 res = tmdb_service.search_movie_multipass(item['title'], '')
+
+            if not res and clean_imdb:
+                cm = fetch_cinemeta_details(clean_imdb)
+                if cm:
+                    update_data = {
+                        'metadata_status': 'ok',
+                        'poster_url': cm.get('poster_url'),
+                        'genres': cm.get('genres_str') or item['genres'],
+                    }
+                    if cm.get('imdb_rating') is not None:
+                        update_data['imdb_rating'] = cm['imdb_rating']
+                    if cm.get('runtime'):
+                        update_data['runtime'] = cm['runtime']
+                    if cm.get('title') and cm['title'] != item['title']:
+                        update_data['clean_title'] = cm['title']
+                    if cm.get('year'):
+                        update_data['year'] = cm['year']
+                        update_data['year_str'] = str(cm['year'])
+
+                    detail_data = None
+                    if include_details:
+                        detail_data = {
+                            'tmdb_id': cm.get('moviedb_id'),
+                            'overview': cm.get('overview', ''),
+                            'genres': cm.get('genres', []),
+                            'runtime': cm.get('runtime'),
+                            'backdrop_url': cm.get('backdrop_url'),
+                            'tagline': '',
+                            'imdb_id': clean_imdb,
+                            'imdb_rating': cm.get('imdb_rating'),
+                            'original_language': '',
+                            'cast': cm.get('cast', []),
+                            'director': cm.get('director', {}),
+                            'trailer_key': cm.get('trailer_key'),
+                            'trailer_url': cm.get('trailer_url'),
+                        }
+                    return {
+                        'id': item['id'],
+                        'success': True,
+                        'title': cm.get('title') or item['display_title'],
+                        'update_data': update_data,
+                        'detail_data': detail_data,
+                        'group_key': item['group_key'],
+                        'cancelled': False,
+                    }
 
             if not res:
                 return {
@@ -129,7 +183,7 @@ class Command(BaseCommand):
             detail_data = None
             if include_details and tmdb_id:
                 try:
-                    ext = tmdb_service.get_extended_details(clean_t, year_str)
+                    ext = tmdb_service.get_extended_details(clean_t, year_str, imdb_id=clean_imdb or '')
                     if ext:
                         detail_data = {
                             'tmdb_id': tmdb_id,

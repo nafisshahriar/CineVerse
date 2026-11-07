@@ -1557,6 +1557,10 @@
           <label for="editPosterUrl">Poster Image URL (optional)</label>
           <input id="editPosterUrl" class="form-input" type="url" placeholder="https://image.tmdb.org/t/p/w500/...">
         </div>
+        <div class="form-row" style="flex-direction: row; align-items: center; gap: 8px; margin-top: 4px;">
+          <input id="editRefetch" type="checkbox" checked style="accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer;">
+          <label for="editRefetch" style="margin: 0; cursor: pointer; font-size: 0.85rem; color: var(--text-secondary);">Refetch artwork &amp; metadata immediately from IMDb ID</label>
+        </div>
         <div style="display:flex; justify-content:flex-end; gap: 10px; margin-top: 12px;">
           <button class="btn-return-cinema" type="button" onclick="closeEditModal()">Cancel</button>
           <button class="btn-op-submit" type="button" onclick="saveMovieEdit()" style="padding: 0 20px;">Save Changes</button>
@@ -2059,6 +2063,9 @@
       const genres = document.getElementById('editGenres').value.trim();
       const posterUrl = document.getElementById('editPosterUrl').value.trim();
 
+      const refetchCheckbox = document.getElementById('editRefetch');
+      const shouldRefetch = refetchCheckbox ? refetchCheckbox.checked : true;
+
       fetch(`/manage/api/movie/${id}/action/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2070,6 +2077,7 @@
           imdb_rating: imdbRating,
           genres: genres,
           poster_url: posterUrl,
+          refetch: shouldRefetch
         })
       })
       .then(r => {

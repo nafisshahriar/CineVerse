@@ -418,6 +418,116 @@ def fetch_poster_omdb(title: str, year: str = ''):
     return None
 
 
+def normalize_imdb_id(raw_id) -> str | None:
+    """
+    Extract canonical IMDb ID (tt followed by 5 to 10 digits) from URL, text, or pure number.
+    e.g. 'https://www.imdb.com/title/tt5104604/' -> 'tt5104604'
+         'tt5104604' -> 'tt5104604'
+         '5104604' -> 'tt5104604'
+    """
+    if not raw_id:
+        return None
+    raw = str(raw_id).strip()
+    m = re.search(r'(tt\d{5,10})', raw, re.IGNORECASE)
+    if m:
+        return m.group(1).lower()
+    m_num = re.search(r'^\d{5,10}$', raw)
+    if m_num:
+        return f"tt{raw}"
+    return None
+
+
+def fetch_cinemeta_details(imdb_id: str) -> dict | None:
+    """
+    Query Cinemeta (free, zero API key) for verified movie or series metadata by IMDb ID.
+    Returns structured dict with title, year, poster_url, backdrop_url, overview,
+    imdb_rating, runtime, genres, cast, director, and trailer.
+    """
+    clean_id = normalize_imdb_id(imdb_id)
+    if not clean_id:
+        return None
+
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    for mtype in ('movie', 'series'):
+        try:
+            url = f'https://v3-cinemeta.strem.io/meta/{mtype}/{clean_id}.json'
+            resp = requests.get(url, headers=headers, timeout=7)
+            if resp.status_code == 200:
+                meta = resp.json().get('meta')
+                if meta and meta.get('name'):
+                    runtime_int = None
+                    raw_rt = meta.get('runtime')
+                    if raw_rt:
+                        m_rt = re.search(r'(\d+)', str(raw_rt))
+                        if m_rt:
+                            runtime_int = int(m_rt.group(1))
+
+                    year_int = None
+                    raw_year = meta.get('year') or meta.get('releaseInfo')
+                    if raw_year:
+                        m_y = re.search(r'(\d{4})', str(raw_year))
+                        if m_y:
+                            year_int = int(m_y.group(1))
+
+                    rating_float = None
+                    raw_rate = meta.get('imdbRating')
+                    if raw_rate:
+                        try:
+                            rating_float = float(raw_rate)
+                        except (ValueError, TypeError):
+                            pass
+
+                    trailer_key = None
+                    trailer_url = None
+                    trailer_streams = meta.get('trailerStreams') or []
+                    if trailer_streams and trailer_streams[0].get('ytId'):
+                        trailer_key = trailer_streams[0]['ytId']
+                    elif meta.get('trailers'):
+                        trailer_key = meta['trailers'][0].get('source')
+                    if trailer_key:
+                        trailer_url = f"https://www.youtube.com/watch?v={trailer_key}"
+
+                    cast_list = []
+                    for c in (meta.get('cast') or [])[:6]:
+                        if isinstance(c, str):
+                            cast_list.append({'name': c, 'character': '', 'profile_path': None})
+                        elif isinstance(c, dict):
+                            cast_list.append(c)
+
+                    director_obj = {}
+                    directors = meta.get('director') or []
+                    if directors and isinstance(directors, list):
+                        director_obj = {'name': directors[0], 'profile_path': None}
+                    elif isinstance(directors, str):
+                        director_obj = {'name': directors, 'profile_path': None}
+
+                    genres = meta.get('genres') or meta.get('genre') or []
+                    if isinstance(genres, str):
+                        genres = [g.strip() for g in genres.split(',') if g.strip()]
+
+                    return {
+                        'imdb_id': clean_id,
+                        'title': meta.get('name'),
+                        'year': year_int,
+                        'release_date': meta.get('released') or (f"{year_int}-01-01" if year_int else None),
+                        'poster_url': meta.get('poster'),
+                        'backdrop_url': meta.get('background'),
+                        'overview': meta.get('description', ''),
+                        'imdb_rating': rating_float,
+                        'runtime': runtime_int,
+                        'genres': genres,
+                        'genres_str': ', '.join(genres) if genres else '',
+                        'cast': cast_list,
+                        'director': director_obj,
+                        'trailer_key': trailer_key,
+                        'trailer_url': trailer_url,
+                        'moviedb_id': meta.get('moviedb_id'),
+                    }
+        except Exception:
+            continue
+    return None
+
+
 def fetch_imdb_rating_and_id(title: str, year=None, known_imdb_id: str = None) -> tuple[float | None, str | None, list]:
     """
     Fetch authentic IMDb rating, IMDb ID (tt...), and genres using Cinemeta and IMDb suggestion API.
@@ -427,14 +537,15 @@ def fetch_imdb_rating_and_id(title: str, year=None, known_imdb_id: str = None) -
 
     def query_cinemeta(imdb_id: str) -> tuple[float | None, list]:
         """Fetch rating and genres from Cinemeta for a verified IMDb ID."""
-        if not imdb_id or not imdb_id.startswith('tt'):
+        clean_id = normalize_imdb_id(imdb_id)
+        if not clean_id:
             return None, []
         try:
-            r = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{imdb_id}.json', timeout=6)
+            r = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{clean_id}.json', headers=headers, timeout=6)
             if r.status_code == 200:
                 meta = r.json().get('meta', {})
                 rate = meta.get('imdbRating')
-                genres = meta.get('genres') or []
+                genres = meta.get('genres') or meta.get('genre') or []
                 if rate:
                     try:
                         return float(rate), genres
@@ -444,11 +555,12 @@ def fetch_imdb_rating_and_id(title: str, year=None, known_imdb_id: str = None) -
             pass
         return None, []
 
-    # 1. If known IMDb ID is provided (e.g. from TMDB)
-    if known_imdb_id and known_imdb_id.startswith('tt'):
-        rate, genres = query_cinemeta(known_imdb_id)
+    # 1. If known IMDb ID is provided (e.g. from TMDB or user)
+    clean_known = normalize_imdb_id(known_imdb_id)
+    if clean_known:
+        rate, genres = query_cinemeta(clean_known)
         if rate is not None:
-            return rate, known_imdb_id, genres
+            return rate, clean_known, genres
 
     # 2. Prepare title for search
     raw_clean = re.sub(r'[/\\:_#-]+', ' ', title or '')

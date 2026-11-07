@@ -3,7 +3,7 @@ from django.test import TestCase, Client, override_settings
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from movies.models import Movie, MovieDetail
-from movies.utils import clean_movie_title, detect_resolution, parse_movie_info, detect_language, fetch_imdb_rating_and_id
+from movies.utils import clean_movie_title, detect_resolution, parse_movie_info, detect_language, fetch_imdb_rating_and_id, normalize_imdb_id, fetch_cinemeta_details
 from movies.task_runner import task_manager, is_task_stopped
 
 User = get_user_model()
@@ -395,3 +395,81 @@ class ManagementSecurityTests(TestCase):
         call_command('reset_catalog', yes=True, stdout=out)
         self.assertEqual(Movie.objects.count(), 0)
         self.assertEqual(MovieDetail.objects.count(), 0)
+
+    def test_normalize_imdb_id(self):
+        self.assertEqual(normalize_imdb_id("https://www.imdb.com/title/tt5104604/"), "tt5104604")
+        self.assertEqual(normalize_imdb_id("tt5104604"), "tt5104604")
+        self.assertEqual(normalize_imdb_id("TT5104604"), "tt5104604")
+        self.assertEqual(normalize_imdb_id("5104604"), "tt5104604")
+        self.assertIsNone(normalize_imdb_id(""))
+        self.assertIsNone(normalize_imdb_id(None))
+
+    def test_fetch_cinemeta_details(self):
+        # Isle of Dogs tt5104604
+        data = fetch_cinemeta_details("tt5104604")
+        self.assertIsNotNone(data)
+        self.assertEqual(data['title'], "Isle of Dogs")
+        self.assertEqual(data['year'], 2018)
+        self.assertEqual(data['imdb_id'], "tt5104604")
+        self.assertIsNotNone(data['imdb_rating'])
+        self.assertTrue(bool(data['poster_url']))
+        self.assertEqual(data['director'].get('name'), "Wes Anderson")
+        self.assertTrue(any("Bryan Cranston" in c.get('name', '') for c in data['cast']))
+
+    def test_update_imdb_id_and_fetch_details(self):
+        # Movie initially has mismatched / messy title and no IMDb ID
+        m = Movie.objects.create(
+            title="02.Isle.of.Dogs.2018.1080p.mkv",
+            clean_title="02 Isle of Dogs",
+            file_url="http://example.com/iod.mkv",
+            group_key="02 isle of dogs",
+            is_primary_copy=True,
+            metadata_status="missing"
+        )
+        # Update IMDb ID to tt5104604 and refetch
+        resp = self.client.post(
+            f'/manage/api/movie/{m.id}/action/',
+            data=json.dumps({
+                'action': 'update_ids',
+                'imdb_id': 'tt5104604',
+                'refetch': True
+            }),
+            content_type='application/json'
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.content)
+        self.assertTrue(data['success'])
+
+        m.refresh_from_db()
+        self.assertEqual(m.imdb_id, "tt5104604")
+        self.assertEqual(m.clean_title, "Isle of Dogs")
+        self.assertEqual(m.year, 2018)
+        self.assertEqual(m.metadata_status, "ok")
+        self.assertIsNotNone(m.imdb_rating)
+        self.assertTrue(bool(m.poster_url))
+
+        # Check that MovieDetail was populated with correct cast & director
+        self.assertTrue(hasattr(m, 'detail'))
+        self.assertEqual(m.detail.director.get('name'), "Wes Anderson")
+
+    def test_movie_refresh_with_imdb_id_in_payload(self):
+        m = Movie.objects.create(
+            title="Fight.Club.1999.1080p.mkv",
+            clean_title="Fight Club Raw",
+            file_url="http://example.com/fc.mkv",
+            group_key="fight club",
+            is_primary_copy=True,
+            metadata_status="missing"
+        )
+        resp = self.client.post(
+            f'/movie/{m.id}/refresh/',
+            data=json.dumps({'imdb_id': 'https://www.imdb.com/title/tt0137523/'}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp.status_code, 200)
+        m.refresh_from_db()
+        self.assertEqual(m.imdb_id, "tt0137523")
+        self.assertEqual(m.clean_title, "Fight Club")
+        self.assertEqual(m.year, 1999)
+        self.assertIsNotNone(m.imdb_rating)
+        self.assertTrue(bool(m.poster_url))

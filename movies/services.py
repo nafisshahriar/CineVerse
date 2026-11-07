@@ -152,14 +152,106 @@ class TMDBService:
 
         return None
 
+    def find_by_imdb_id(self, imdb_id: str) -> Optional[Dict]:
+        """
+        Lookup movie or TV show on TMDB directly by IMDb ID (/find/{imdb_id}?external_source=imdb_id).
+        Returns the top matching movie or TV candidate dictionary.
+        """
+        from movies.utils import normalize_imdb_id
+        clean_id = normalize_imdb_id(imdb_id)
+        if not clean_id:
+            return None
+        data = self._get(f'/find/{clean_id}', {'external_source': 'imdb_id'})
+        if data:
+            movies = data.get('movie_results', [])
+            if movies:
+                return movies[0]
+            tv = data.get('tv_results', [])
+            if tv:
+                return tv[0]
+        return None
+
     def get_movie_details(self, tmdb_id: int) -> Optional[Dict]:
         """Get full movie details by TMDB ID"""
         return self._get(f'/movie/{tmdb_id}')
 
-    def get_extended_details(self, title: str, year: str = '') -> Optional[Dict]:
-        """Search and fetch extended movie details in one call with multi-pass search fallback."""
-        search_result = self.search_movie_multipass(title, year)
+    def get_extended_details(self, title: str, year: str = '', imdb_id: str = '') -> Optional[Dict]:
+        """
+        Search and fetch extended movie details with priority resolution:
+        1. If imdb_id is provided, resolve directly via TMDB /find/{imdb_id}.
+        2. If TMDB has no match or no API key, fallback to Cinemeta via IMDb ID.
+        3. If no imdb_id or not found, fall back to robust multi-pass search.
+        """
+        from movies.utils import normalize_imdb_id, fetch_cinemeta_details
+
+        clean_imdb = normalize_imdb_id(imdb_id)
+        search_result = None
+
+        if clean_imdb:
+            search_result = self.find_by_imdb_id(clean_imdb)
+
+        if not search_result and title:
+            search_result = self.search_movie_multipass(title, year)
+
+        # Fallback to Cinemeta if TMDB had no match (or no API key) and IMDb ID is available
         if not search_result:
+            if clean_imdb:
+                cm = fetch_cinemeta_details(clean_imdb)
+                if cm:
+                    # If Cinemeta returned a moviedb_id and TMDB API key is active, try TMDB details
+                    if cm.get('moviedb_id') and self.api_key:
+                        details = self.get_movie_details(cm['moviedb_id'])
+                        if details:
+                            rel_date = details.get('release_date') or cm['release_date']
+                            return {
+                                'tmdb_id': cm['moviedb_id'],
+                                'title': details.get('title') or cm['title'],
+                                'release_date': rel_date,
+                                'poster_url': self.poster_url(details.get('poster_path')) or cm['poster_url'],
+                                'backdrop_url': self.backdrop_url(details.get('backdrop_path')) or cm['backdrop_url'],
+                                'overview': details.get('overview') or cm['overview'],
+                                'genres': [g['name'] for g in details.get('genres', [])] or cm['genres'],
+                                'runtime': details.get('runtime') or cm['runtime'],
+                                'tagline': details.get('tagline', ''),
+                                'imdb_id': clean_imdb,
+                                'imdb_rating': cm['imdb_rating'],
+                                'original_language': details.get('original_language', ''),
+                                'spoken_languages': [l.get('english_name') for l in details.get('spoken_languages', []) if l.get('english_name')],
+                                'budget': details.get('budget'),
+                                'revenue': details.get('revenue'),
+                                'production_companies': [c['name'] for c in details.get('production_companies', [])],
+                                'popularity': details.get('popularity'),
+                                'vote_count': details.get('vote_count'),
+                                'vote_average': details.get('vote_average'),
+                                **(self.get_movie_trailer(cm['moviedb_id']) or {'trailer_key': cm['trailer_key'], 'trailer_url': cm['trailer_url']}),
+                                **self._extract_credits(cm['moviedb_id']),
+                            }
+                    # Return Cinemeta metadata directly
+                    return {
+                        'tmdb_id': cm.get('moviedb_id'),
+                        'title': cm['title'],
+                        'release_date': cm['release_date'],
+                        'poster_url': cm['poster_url'],
+                        'backdrop_url': cm['backdrop_url'],
+                        'overview': cm['overview'],
+                        'genres': cm['genres'],
+                        'runtime': cm['runtime'],
+                        'tagline': '',
+                        'imdb_id': clean_imdb,
+                        'imdb_rating': cm['imdb_rating'],
+                        'original_language': '',
+                        'spoken_languages': [],
+                        'budget': None,
+                        'revenue': None,
+                        'production_companies': [],
+                        'popularity': None,
+                        'vote_count': None,
+                        'vote_average': cm['imdb_rating'],
+                        'trailer_key': cm['trailer_key'],
+                        'trailer_url': cm['trailer_url'],
+                        'cast': cm['cast'],
+                        'director': cm['director'],
+                    }
             return None
 
         tmdb_id = search_result.get('id')
@@ -167,9 +259,15 @@ class TMDBService:
             return None
 
         details = self.get_movie_details(tmdb_id)
+        official_title = (details.get('title') if details else None) or search_result.get('title') or search_result.get('name') or title
+        rel_date = (details.get('release_date') if details else None) or search_result.get('release_date') or search_result.get('first_air_date')
+        res_imdb = clean_imdb or (details.get('imdb_id') if details else None) or ''
+
         if not details:
             return {
                 'tmdb_id': tmdb_id,
+                'title': official_title,
+                'release_date': rel_date,
                 'poster_url': self.poster_url(search_result.get('poster_path')),
                 'backdrop_url': self.backdrop_url(search_result.get('backdrop_path')),
                 'overview': search_result.get('overview', ''),
@@ -177,18 +275,20 @@ class TMDBService:
                 'vote_count': search_result.get('vote_count'),
                 'vote_average': search_result.get('vote_average'),
                 'original_language': search_result.get('original_language', ''),
+                'imdb_id': res_imdb,
             }
 
         return {
             'tmdb_id': tmdb_id,
+            'title': official_title,
+            'release_date': rel_date,
             'poster_url': self.poster_url(details.get('poster_path')),
             'backdrop_url': self.backdrop_url(details.get('backdrop_path')),
             'overview': details.get('overview', ''),
             'genres': [g['name'] for g in details.get('genres', [])],
             'runtime': details.get('runtime'),
-            'release_date': details.get('release_date'),
             'tagline': details.get('tagline', ''),
-            'imdb_id': details.get('imdb_id', ''),
+            'imdb_id': res_imdb or details.get('imdb_id', ''),
             'original_language': details.get('original_language', ''),
             'spoken_languages': [l.get('english_name') for l in details.get('spoken_languages', []) if l.get('english_name')],
             'budget': details.get('budget'),
@@ -326,23 +426,35 @@ def fetch_poster_and_details(title: str, year: str = '') -> Optional[Dict]:
 def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, dict]:
     """
     Unified metadata enricher:
-    - Finds movie on TMDB using multi-pass matching
-    - Updates poster_url, popularity, vote_average, vote_count, genres, metadata_status
-    - Resolves authentic IMDb rating and IMDb ID
-    - Populates MovieDetail (cast, director, overview, backdrop, runtime)
+    - Resolves by authentic IMDb ID (movie.imdb_id) as primary key if present
+    - Otherwise falls back to TMDB multi-pass title matching
+    - Updates clean_title and year to official resolved values
+    - Updates poster_url, popularity, vote_average, vote_count, genres, metadata_status, runtime
+    - Populates MovieDetail (cast, director, overview, backdrop, runtime, trailer)
     - Synchronizes all server copies sharing the same group_key atomically
     """
     from django.db import transaction
     from movies.models import Movie, MovieDetail
-    from movies.utils import fetch_imdb_rating_and_id, TMDB_GENRES
+    from movies.utils import fetch_imdb_rating_and_id, TMDB_GENRES, normalize_imdb_id, fetch_cinemeta_details
 
+    known_imdb_id = normalize_imdb_id(movie.imdb_id)
     search_title = movie.clean_title or movie.title
     year_str = str(movie.year) if movie.year else ''
 
-    res = tmdb_service.search_movie_multipass(search_title, year_str)
+    res = None
     ext = None
-    if res and res.get('id'):
-        ext = tmdb_service.get_extended_details(search_title, year_str)
+
+    # Step 1: Prioritize exact resolution via IMDb ID if present
+    if known_imdb_id:
+        ext = tmdb_service.get_extended_details(search_title, year_str, imdb_id=known_imdb_id)
+        if ext and ext.get('tmdb_id'):
+            res = {'id': ext['tmdb_id'], 'poster_path': None}
+
+    # Step 2: Fall back to title search if no IMDb ID or if IMDb lookup returned nothing
+    if not ext:
+        res = tmdb_service.search_movie_multipass(search_title, year_str)
+        if res and res.get('id'):
+            ext = tmdb_service.get_extended_details(search_title, year_str)
 
     poster_url = None
     backdrop_url = None
@@ -351,8 +463,25 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
     vote_cnt = None
     tmdb_id = None
     genre_str = None
+    official_title = None
+    official_year = None
 
-    if res:
+    if ext:
+        official_title = ext.get('title')
+        if ext.get('release_date') and len(ext['release_date']) >= 4 and ext['release_date'][:4].isdigit():
+            official_year = int(ext['release_date'][:4])
+        elif ext.get('year'):
+            official_year = ext['year']
+        poster_url = ext.get('poster_url')
+        backdrop_url = ext.get('backdrop_url')
+        popularity = ext.get('popularity')
+        vote_avg = ext.get('vote_average')
+        vote_cnt = ext.get('vote_count')
+        tmdb_id = ext.get('tmdb_id')
+        if ext.get('genres'):
+            genre_str = ', '.join(ext['genres']) if isinstance(ext['genres'], list) else ext['genres']
+
+    elif res:
         tmdb_id = res.get('id')
         poster_path = res.get('poster_path')
         poster_url = tmdb_service.poster_url(poster_path) if poster_path else None
@@ -361,27 +490,25 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
         popularity = res.get('popularity')
         vote_avg = res.get('vote_average')
         vote_cnt = res.get('vote_count')
-
-        genre_names = []
-        if ext and ext.get('genres'):
-            genre_names = ext.get('genres')
-        elif res.get('genre_ids'):
+        if res.get('genre_ids'):
             genre_names = [TMDB_GENRES.get(gid) for gid in res['genre_ids'] if gid in TMDB_GENRES]
-        genre_str = ', '.join([g for g in genre_names if g]) if genre_names else movie.genres
+            genre_str = ', '.join([g for g in genre_names if g])
 
-    # Query authentic IMDb ratings using TMDB verified canonical IMDb ID if available
-    canonical_imdb_id = (ext.get('imdb_id') if ext else None) or movie.imdb_id
-    lookup_year = movie.year
-    if ext and ext.get('release_date') and len(ext['release_date']) >= 4 and ext['release_date'][:4].isdigit():
-        lookup_year = int(ext['release_date'][:4])
+    # Authentic IMDb Rating & IMDb ID
+    # Preserve known_imdb_id: Never overwrite user's set IMDb ID with an ext ID if known_imdb_id is set
+    canonical_imdb_id = known_imdb_id or (ext.get('imdb_id') if ext else None) or movie.imdb_id
+    lookup_year = official_year or movie.year
 
-    imdb_res = fetch_imdb_rating_and_id(search_title, lookup_year, known_imdb_id=canonical_imdb_id)
-    imdb_rating = imdb_res[0] if (imdb_res and imdb_res[0]) else movie.imdb_rating
-    imdb_id = imdb_res[1] if (imdb_res and len(imdb_res) > 1 and imdb_res[1]) else (canonical_imdb_id or movie.imdb_id)
-    if imdb_res and len(imdb_res) > 2 and imdb_res[2] and not genre_str:
-        genre_str = ', '.join(imdb_res[2])
+    imdb_rating = ext.get('imdb_rating') if ext else None
+    if imdb_rating is None:
+        imdb_res = fetch_imdb_rating_and_id(official_title or search_title, lookup_year, known_imdb_id=canonical_imdb_id)
+        imdb_rating = imdb_res[0] if (imdb_res and imdb_res[0]) else movie.imdb_rating
+        if not canonical_imdb_id and imdb_res and len(imdb_res) > 1 and imdb_res[1]:
+            canonical_imdb_id = imdb_res[1]
+        if imdb_res and len(imdb_res) > 2 and imdb_res[2] and not genre_str:
+            genre_str = ', '.join(imdb_res[2])
 
-    if not res and not imdb_rating and not poster_url:
+    if not res and not ext and imdb_rating is None and not poster_url:
         movie.metadata_status = 'failed'
         movie.save(update_fields=['metadata_status'])
         return False, {'error': 'No matching title found on TMDB or IMDb'}
@@ -389,6 +516,11 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
     update_fields = {
         'metadata_status': 'ok',
     }
+    if official_title and official_title != movie.title:
+        update_fields['clean_title'] = official_title
+    if official_year:
+        update_fields['year'] = official_year
+        update_fields['year_str'] = str(official_year)
     if poster_url:
         update_fields['poster_url'] = poster_url
     if popularity is not None:
@@ -399,10 +531,10 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
         update_fields['vote_count'] = vote_cnt
     if genre_str:
         update_fields['genres'] = genre_str
-    if imdb_rating:
+    if imdb_rating is not None:
         update_fields['imdb_rating'] = imdb_rating
-    if imdb_id:
-        update_fields['imdb_id'] = imdb_id
+    if canonical_imdb_id:
+        update_fields['imdb_id'] = canonical_imdb_id
     if ext and ext.get('runtime'):
         update_fields['runtime'] = ext['runtime']
 
@@ -416,26 +548,40 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
             Movie.objects.filter(group_key=movie.group_key).update(**update_fields)
 
         # Extended details
-        if include_details and (ext or res):
+        if include_details and ext:
             try:
                 detail, _ = MovieDetail.objects.get_or_create(movie=movie)
                 if tmdb_id:
                     detail.tmdb_id = tmdb_id
-                if ext:
-                    detail.overview = ext.get('overview', '')
-                    detail.genres = ext.get('genres', [])
-                    detail.runtime = ext.get('runtime')
-                    detail.backdrop_url = ext.get('backdrop_url') or backdrop_url
-                    detail.tagline = ext.get('tagline', '')
-                    detail.cast = ext.get('cast', [])
-                    detail.director = ext.get('director', {})
-                    detail.original_language = ext.get('original_language', '')
-                    if ext.get('trailer_key'):
-                        detail.trailer_key = ext.get('trailer_key')
-                        detail.trailer_url = ext.get('trailer_url')
-                elif res:
-                    detail.overview = res.get('overview', '')
-                    detail.backdrop_url = backdrop_url
+                detail.imdb_id = canonical_imdb_id or ''
+                detail.imdb_rating = imdb_rating
+                detail.overview = ext.get('overview', '')
+                detail.genres = ext.get('genres', [])
+                detail.runtime = ext.get('runtime')
+                detail.backdrop_url = ext.get('backdrop_url') or backdrop_url
+                detail.tagline = ext.get('tagline', '')
+                detail.cast = ext.get('cast', [])
+                detail.director = ext.get('director', {})
+                detail.original_language = ext.get('original_language', '')
+                if ext.get('trailer_key'):
+                    detail.trailer_key = ext.get('trailer_key')
+                    detail.trailer_url = ext.get('trailer_url')
+                if official_year and ext.get('release_date'):
+                    try:
+                        from datetime import datetime
+                        detail.release_date = datetime.strptime(str(ext['release_date'])[:10], '%Y-%m-%d').date()
+                    except Exception:
+                        pass
+                detail.save()
+            except Exception:
+                pass
+        elif include_details and res:
+            try:
+                detail, _ = MovieDetail.objects.get_or_create(movie=movie)
+                if tmdb_id:
+                    detail.tmdb_id = tmdb_id
+                detail.overview = res.get('overview', '')
+                detail.backdrop_url = backdrop_url
                 detail.save()
             except Exception:
                 pass
@@ -443,9 +589,11 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
     return True, {
         'id': movie.id,
         'title': movie.display_title,
+        'year': movie.year,
         'poster_url': movie.poster_url,
         'imdb_rating': movie.imdb_rating,
         'imdb_id': movie.imdb_id,
+        'runtime': movie.runtime,
         'genres': movie.genres,
         'popularity': movie.popularity,
         'metadata_status': movie.metadata_status,
