@@ -656,10 +656,9 @@
         btn.disabled = true;
         btn.innerHTML = '<span class="fetch-spinner-sm"></span> Finding...';
 
-        fetch('/manage/api/movie/' + movieId + '/action/', {
+        fetch('/movie/' + movieId + '/refresh/', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'refresh' })
+          headers: { 'Content-Type': 'application/json' }
         })
         .then(r => {
           if (!r.ok) throw new Error('Server returned ' + r.status);
@@ -668,7 +667,7 @@
         .then(data => {
           if (data.success && data.movie && data.movie.poster_url) {
             btn.innerHTML = '✓ Found!';
-            const card = btn.closest('.card');
+            const card = btn.closest('.card') || document.querySelector(`.card[data-movie-id="${movieId}"]`);
             if (card) {
               const posterWrap = card.querySelector('.poster');
               if (posterWrap) {
@@ -681,16 +680,27 @@
                   img.className = 'fade-in-poster';
                   posterWrap.replaceChild(img, noPoster);
                 }
-                if (data.movie.imdb_rating) {
-                  let ratingBadge = posterWrap.querySelector('.imdb-rating-badge');
-                  if (ratingBadge) {
-                    ratingBadge.innerHTML = `<span class="star-icon">★</span> ${data.movie.imdb_rating.toFixed(1)}`;
-                  } else {
-                    const badgeWrap = document.createElement('div');
-                    badgeWrap.className = 'poster-badges top-right';
-                    badgeWrap.innerHTML = `<span class="badge imdb-rating-badge" title="IMDb: ${data.movie.imdb_rating.toFixed(1)}"><span class="star-icon">★</span> ${data.movie.imdb_rating.toFixed(1)}</span>`;
-                    posterWrap.appendChild(badgeWrap);
-                  }
+              }
+              if (data.movie.imdb_rating) {
+                let ratingBadge = card.querySelector('.card-imdb');
+                if (ratingBadge) {
+                  ratingBadge.innerHTML = `<span class="star-icon">★</span> ${data.movie.imdb_rating.toFixed(1)}`;
+                }
+              }
+              if (data.movie.runtime) {
+                let rBadge = card.querySelector('.card-runtime');
+                const h = Math.floor(data.movie.runtime / 60);
+                const m = data.movie.runtime % 60;
+                const rStr = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+                if (rBadge) {
+                  rBadge.innerHTML = `<span class="pill-icon">⏱️</span> ${rStr}`;
+                }
+              }
+              if (data.movie.genres) {
+                let gBadge = card.querySelector('.card-genre');
+                const pGenre = data.movie.genres.split(',')[0].trim();
+                if (gBadge && pGenre) {
+                  gBadge.textContent = pGenre;
                 }
               }
             }
@@ -706,7 +716,7 @@
               btn.disabled = false;
               btn.innerHTML = originalHtml;
             }, 2500);
-            window.showToast('No matching TMDB poster found for this movie.', 'warning');
+            window.showToast(data.message || 'No matching TMDB poster found for this movie.', 'warning');
           }
         })
         .catch(err => {
@@ -729,10 +739,9 @@
           btn.innerHTML = '<span class="fetch-spinner-sm"></span> Searching TMDB &amp; IMDb...';
         }
 
-        fetch('/manage/api/movie/' + movieId + '/action/', {
+        fetch('/movie/' + movieId + '/refresh/', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'refresh' })
+          headers: { 'Content-Type': 'application/json' }
         })
         .then(r => {
           if (!r.ok) throw new Error('Server returned ' + r.status);
@@ -769,6 +778,13 @@
                 const rStr = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
                 if (rBadge) {
                   rBadge.innerHTML = `<span class="pill-icon">⏱️</span> ${rStr}`;
+                }
+              }
+              if (data.movie.genres) {
+                let gBadge = card.querySelector('.card-genre');
+                const pGenre = data.movie.genres.split(',')[0].trim();
+                if (gBadge && pGenre) {
+                  gBadge.textContent = pGenre;
                 }
               }
             }

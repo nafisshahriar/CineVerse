@@ -1686,6 +1686,16 @@
     // ============================================================
     // Launch Operations Functions
     // ============================================================
+    function handleApiError(err, fallbackMsg) {
+      if (err.message && (err.message.includes('403') || err.message.includes('401'))) {
+        if (confirm('🔒 Administrator session expired or login required.\nWould you like to log in now?')) {
+          window.location.href = '/admin/login/?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        }
+      } else {
+        alert(fallbackMsg + ': ' + err.message);
+      }
+    }
+
     function triggerTask(type, params) {
       fetch('/manage/api/task/start/', {
         method: 'POST',
@@ -1704,7 +1714,7 @@
           alert('Could not start task: ' + res.message);
         }
       })
-      .catch(err => alert('Network error: ' + err.message));
+      .catch(err => handleApiError(err, 'Failed to start task'));
     }
 
     function startPostersTask() {
@@ -1942,10 +1952,9 @@
       const row = document.getElementById(`movie-row-${id}`);
       if (row) row.style.opacity = '0.5';
 
-      fetch(`/manage/api/movie/${id}/action/`, {
+      fetch(`/movie/${id}/refresh/`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'refresh' })
+        headers: { 'Content-Type': 'application/json' }
       })
       .then(r => {
         if (!r.ok) throw new Error('Server returned ' + r.status);
@@ -1959,7 +1968,7 @@
         }
       })
       .catch(err => {
-        alert('Error: ' + err.message);
+        handleApiError(err, 'Error refreshing movie');
       })
       .finally(() => {
         if (row) row.style.opacity = '1';
@@ -1984,7 +1993,7 @@
             alert('Could not delete: ' + res.message);
           }
         })
-        .catch(err => alert('Error: ' + err.message));
+        .catch(err => handleApiError(err, 'Error deleting movie'));
       }
     }
 
@@ -2039,7 +2048,7 @@
           alert('Error updating: ' + res.message);
         }
       })
-      .catch(err => alert('Error: ' + err.message));
+      .catch(err => handleApiError(err, 'Error updating movie'));
     }
   </script>
 </body>

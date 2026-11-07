@@ -203,6 +203,25 @@ class ManagementSecurityTests(TestCase):
         self.assertTrue(Movie.objects.filter(pk=self.movie.id).exists())
 
     @override_settings(MANAGE_REQUIRE_AUTH=True)
+    def test_anonymous_can_refresh_single_movie_without_403(self):
+        """Anonymous visitors must be able to fetch/refresh single movie metadata without 403 errors."""
+        # 1. Dedicated public endpoint
+        res_pub = self.client.post(reverse('movie_refresh_ajax', args=[self.movie.id]))
+        self.assertEqual(res_pub.status_code, 200)
+
+        # 2. Action API refresh action
+        res_act = self.client.post(
+            reverse('manage_movie_action_api', args=[self.movie.id]),
+            data=json.dumps({'action': 'refresh'}),
+            content_type='application/json'
+        )
+        self.assertEqual(res_act.status_code, 200)
+
+        # 3. Read-only task status polling
+        res_stat = self.client.get(reverse('manage_task_status_api'))
+        self.assertEqual(res_stat.status_code, 200)
+
+    @override_settings(MANAGE_REQUIRE_AUTH=True)
     def test_regular_user_cannot_access_manage_dashboard(self):
         self.client.login(username='guest_user', password='Password123!')
         response = self.client.get(reverse('manage_dashboard'))

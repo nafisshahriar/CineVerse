@@ -486,6 +486,42 @@ def movie_detail_ajax(request, movie_id):
     })
 
 
+@csrf_exempt
+def movie_refresh_ajax(request, movie_id):
+    """
+    Public on-demand metadata & IMDb rating fetch/refresh for a single movie.
+    Safe, non-destructive, and accessible without administrator login.
+    Enriches TMDB poster, backdrop, runtime, trailer, and authentic IMDb rating.
+    """
+    if request.method not in ('POST', 'GET'):
+        return JsonResponse({'success': False, 'message': 'Method not allowed'}, status=405)
+
+    movie = get_object_or_404(Movie, pk=movie_id)
+    from movies.services import enrich_movie_metadata
+    success, res_data = enrich_movie_metadata(movie, include_details=True)
+
+    if success:
+        return JsonResponse({
+            'success': True,
+            'message': f"Enriched: {movie.display_title}",
+            'movie': res_data,
+        })
+    else:
+        return JsonResponse({
+            'success': False,
+            'message': res_data.get('error', 'Could not resolve movie from TMDB or IMDb'),
+            'movie': {
+                'id': movie.id,
+                'title': movie.display_title,
+                'poster_url': movie.poster_url,
+                'imdb_rating': movie.imdb_rating,
+                'runtime': movie.runtime,
+                'genres': movie.genres,
+                'metadata_status': movie.metadata_status,
+            }
+        })
+
+
 # ============================================================
 # Management & Maintenance Access Control & Views
 # ============================================================
@@ -524,7 +560,9 @@ def manage_auth_required(view_func):
             return JsonResponse({
                 'success': False,
                 'error': 'Unauthorized',
-                'message': 'Administrator authentication is required to access management controls or perform maintenance tasks.'
+                'is_auth_error': True,
+                'login_url': '/admin/login/?next=' + request.path,
+                'message': 'Administrator authentication is required to access management controls. If your session expired, please log in again.'
             }, status=403)
 
         return redirect_to_login(request.get_full_path(), login_url='/admin/login/')
@@ -630,7 +668,6 @@ def manage_task_start_api(request):
     return JsonResponse({'success': success, 'message': msg})
 
 
-@manage_auth_required
 def manage_task_status_api(request):
     """API endpoint to poll active background task progress and streaming logs."""
     return JsonResponse(task_manager.get_status())
@@ -707,7 +744,6 @@ def manage_movies_api(request):
 
 
 @csrf_exempt
-@manage_auth_required
 def manage_movie_action_api(request, movie_id):
     """API endpoint for single-movie maintenance actions (re-fetch, edit IDs, delete)."""
     if request.method != 'POST':
@@ -721,6 +757,7 @@ def manage_movie_action_api(request, movie_id):
 
     action = data.get('action')
 
+    # Safe on-demand metadata & IMDb rating fetch/refresh: accessible without staff auth
     if action == 'refresh':
         from movies.services import enrich_movie_metadata
         success, res_data = enrich_movie_metadata(movie, include_details=True)
@@ -736,12 +773,30 @@ def manage_movie_action_api(request, movie_id):
                 'message': res_data.get('error', 'Could not resolve movie from TMDB or IMDb'),
                 'movie': {
                     'id': movie.id,
+                    'title': movie.display_title,
                     'poster_url': movie.poster_url,
+                    'imdb_rating': movie.imdb_rating,
+                    'runtime': movie.runtime,
+                    'genres': movie.genres,
                     'metadata_status': movie.metadata_status,
                 }
             })
 
-    elif action == 'update_ids':
+    # Destructive actions (update_ids, delete) require staff authentication
+    require_auth = getattr(settings, 'MANAGE_REQUIRE_AUTH', False)
+    if require_auth and not (request.user.is_authenticated and request.user.is_staff):
+        secret_token = getattr(settings, 'MANAGE_SECRET_TOKEN', '')
+        token = request.headers.get('X-Manage-Token') or request.GET.get('token')
+        if not (secret_token and token == secret_token):
+            return JsonResponse({
+                'success': False,
+                'error': 'Unauthorized',
+                'is_auth_error': True,
+                'login_url': '/admin/login/?next=' + request.path,
+                'message': 'Administrator authentication is required to edit or delete movies.'
+            }, status=403)
+
+    if action == 'update_ids':
         imdb_id = data.get('imdb_id', '').strip()
         imdb_rating = data.get('imdb_rating')
         clean_title = data.get('clean_title', '').strip()
