@@ -202,7 +202,7 @@ class BackgroundTaskManager:
         self.stop_requested.set()
         self.append_log("[STOP] Cancellation requested by administrator. Halting background workers...")
         with self.state_lock:
-            self.task_state['status'] = 'stopped'
+            self.task_state['status'] = 'stopping'
             self.task_state['finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return True, "Cancellation signal sent. Workers are terminating."
 
@@ -218,9 +218,11 @@ class BackgroundTaskManager:
                     self.task_state['status'] = 'stopped'
                     self.task_state['finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     self.append_log("[STOPPED] Task was stopped by administrator.")
-                elif self.task_state['status'] == 'running':
+                elif self.task_state['status'] in ('running', 'stopping'):
                     self.task_state['status'] = 'completed'
                     self.task_state['progress_percent'] = 100.0
+                    self.task_state['remaining'] = 0
+                    self.task_state['eta'] = '0s'
                     self.task_state['finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     self.append_log("[SUCCESS] Task completed successfully!")
         except Exception as e:
@@ -255,7 +257,7 @@ class BackgroundTaskManager:
 
         elif task_type in ('fetch_posters', 'fetch_missing_metadata'):
             limit = int(params.get('limit', 0)) if params.get('limit') else None
-            workers = int(params.get('workers', 12)) if params.get('workers') else 12
+            workers = int(params.get('workers', 4)) if params.get('workers') else 4
             force = bool(params.get('force', False))
             include_details = bool(params.get('include_details', False))
 
@@ -267,7 +269,7 @@ class BackgroundTaskManager:
         elif task_type == 'fetch_genres':
             limit = int(params.get('limit', 500)) if params.get('limit') else 500
             fetch_all = bool(params.get('all', False))
-            workers = int(params.get('workers', 16)) if params.get('workers') else 16
+            workers = int(params.get('workers', 4)) if params.get('workers') else 4
             force = bool(params.get('force', False))
 
             kwargs = {'workers': workers, 'force': force, 'stdout': out_stream, 'stderr': out_stream}
@@ -280,7 +282,7 @@ class BackgroundTaskManager:
         elif task_type == 'fetch_imdb':
             limit = int(params.get('limit', 500)) if params.get('limit') else 500
             fetch_all = bool(params.get('all', False))
-            workers = int(params.get('workers', 8)) if params.get('workers') else 8
+            workers = int(params.get('workers', 4)) if params.get('workers') else 4
             force = bool(params.get('force', False))
 
             kwargs = {'workers': workers, 'force': force, 'stdout': out_stream, 'stderr': out_stream}

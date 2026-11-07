@@ -189,8 +189,13 @@ def clean_movie_title(raw_name: str) -> tuple[str, str]:
 
     # Clean brackets, preserving titles starting with (500)
     if not title_part.startswith('(500)'):
-        title_part = re.sub(r'\[.*?\]', '', title_part)
-        title_part = re.sub(r'\((?!500\b).*?\)', '', title_part)
+        cleaned_brackets = re.sub(r'\[.*?\]', '', title_part)
+        cleaned_parens = re.sub(r'\((?!500\b).*?\)', '', cleaned_brackets)
+        # If removing all bracketed content emptied the title (e.g. '[Rec]'), preserve the text inside
+        if not cleaned_parens.strip(' -._:,#/\\'):
+            title_part = re.sub(r'[\[\]\(\)]', '', title_part)
+        else:
+            title_part = cleaned_parens
 
     clean = re.sub(r'\s+', ' ', title_part).strip(' -._:,#/\\')
     return clean or name, year
@@ -513,6 +518,33 @@ def fetch_imdb_rating_and_id(title: str, year=None, known_imdb_id: str = None) -
         rate, i_id, g_list = check_candidate(item)
         if rate is not None:
             return rate, i_id, g_list
+
+    # Pass 3: Fallback to TMDB external IDs if IMDb suggestion API yielded no match
+    tmdb_key = TMDB_API_KEY or os.getenv('TMDB_API_KEY')
+    if tmdb_key:
+        try:
+            params = {'api_key': tmdb_key, 'query': clean_title_for_search(title)}
+            if year:
+                params['year'] = str(year)
+            r_tmdb = requests.get('https://api.themoviedb.org/3/search/movie', params=params, timeout=5)
+            if r_tmdb.status_code == 200:
+                t_results = r_tmdb.json().get('results', [])
+                if t_results:
+                    tmdb_m_id = t_results[0].get('id')
+                    if tmdb_m_id:
+                        r_ext = requests.get(
+                            f'https://api.themoviedb.org/3/movie/{tmdb_m_id}/external_ids',
+                            params={'api_key': tmdb_key},
+                            timeout=5
+                        )
+                        if r_ext.status_code == 200:
+                            found_tt = r_ext.json().get('imdb_id')
+                            if found_tt and found_tt.startswith('tt'):
+                                rate, genres = query_cinemeta(found_tt)
+                                if rate is not None:
+                                    return rate, found_tt, genres
+        except Exception:
+            pass
 
     return None, None, []
 

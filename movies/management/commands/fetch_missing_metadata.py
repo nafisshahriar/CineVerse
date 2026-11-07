@@ -1,7 +1,8 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.db.models import Q
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import time
@@ -16,14 +17,14 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('--limit', type=int, default=None, help='Max movies to process (default: all missing)')
-        parser.add_argument('--workers', type=int, default=12, help='Concurrent worker threads (default: 12)')
+        parser.add_argument('--workers', type=int, default=4, help='Concurrent worker threads (default: 4)')
         parser.add_argument('--force', action='store_true', help='Re-fetch even if movie already has a poster')
         parser.add_argument('--include-details', action='store_true', help='Fetch extended details (cast, director, runtime, backdrop)')
         parser.add_argument('--all', action='store_true', help='Process all movies missing posters')
 
     def handle(self, *args, **options):
         limit = options['limit']
-        workers = options['workers']
+        workers = options['workers'] or 4
         force = options['force']
         include_details = options['include_details']
 
@@ -49,6 +50,20 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS('\n[OK] All movies already have posters and metadata populated!'))
             return
 
+        # Pre-extract lightweight plain Python dictionaries to avoid ORM access across threads
+        movie_items = [
+            {
+                'id': m.id,
+                'title': m.title,
+                'clean_title': m.clean_title or m.title,
+                'display_title': m.display_title,
+                'year': m.year,
+                'genres': m.genres,
+                'group_key': m.group_key,
+            }
+            for m in movies
+        ]
+
         self.stdout.write(self.style.MIGRATE_HEADING(
             f'\nFetching missing posters & metadata for {total} movies using {workers} concurrent threads...'
         ))
@@ -58,22 +73,27 @@ class Command(BaseCommand):
         failed_count = 0
         stopped_early = False
 
-        def process_movie(movie: Movie):
+        def process_movie_io(item: dict) -> dict:
+            """Pure network I/O worker. Zero database reads/writes in worker threads."""
             if is_task_stopped():
-                return False, movie.display_title, 'Cancelled', True
+                return {'id': item['id'], 'cancelled': True, 'title': item['display_title']}
 
-            clean_t = movie.clean_title or movie.title
-            year_str = str(movie.year) if movie.year else ''
+            clean_t = item['clean_title']
+            year_str = str(item['year']) if item['year'] else ''
 
             # Robust multi-pass TMDB lookup (with/without year, track stripping, symbol stripping)
             res = tmdb_service.search_movie_multipass(clean_t, year_str)
-            if not res and movie.title and movie.title != clean_t:
-                res = tmdb_service.search_movie_multipass(movie.title, '')
+            if not res and item['title'] and item['title'] != clean_t:
+                res = tmdb_service.search_movie_multipass(item['title'], '')
 
             if not res:
-                movie.metadata_status = 'failed'
-                movie.save(update_fields=['metadata_status'])
-                return False, movie.display_title, 'Not found on TMDB', False
+                return {
+                    'id': item['id'],
+                    'success': False,
+                    'title': item['display_title'],
+                    'extra': 'Not found on TMDB',
+                    'cancelled': False,
+                }
 
             # Extract fields
             poster_path = res.get('poster_path')
@@ -90,7 +110,7 @@ class Command(BaseCommand):
             genre_names = []
             if res.get('genre_ids'):
                 genre_names = [TMDB_GENRES.get(gid) for gid in res['genre_ids'] if gid in TMDB_GENRES]
-            genre_str = ', '.join([g for g in genre_names if g]) if genre_names else movie.genres
+            genre_str = ', '.join([g for g in genre_names if g]) if genre_names else item['genres']
 
             update_data = {
                 'metadata_status': 'ok',
@@ -103,71 +123,100 @@ class Command(BaseCommand):
                 update_data['vote_average'] = vote_avg
             if vote_cnt is not None:
                 update_data['vote_count'] = vote_cnt
-            if genre_str and not movie.genres:
+            if genre_str and not item['genres']:
                 update_data['genres'] = genre_str
 
-            with transaction.atomic():
-                for k, v in update_data.items():
-                    setattr(movie, k, v)
-                movie.save()
-
-                # Sync across all server copies sharing the same group key
-                if movie.group_key:
-                    Movie.objects.filter(group_key=movie.group_key).update(**update_data)
-
-                # Extended details if requested
-                if include_details and tmdb_id:
-                    try:
-                        ext = tmdb_service.get_extended_details(clean_t, year_str)
-                        if ext:
-                            detail, _ = MovieDetail.objects.get_or_create(movie=movie)
-                            detail.tmdb_id = tmdb_id
-                            detail.overview = ext.get('overview', '')
-                            detail.genres = ext.get('genres', [])
-                            detail.runtime = ext.get('runtime')
-                            detail.backdrop_url = ext.get('backdrop_url') or backdrop_url
-                            detail.tagline = ext.get('tagline', '')
-                            detail.cast = ext.get('cast', [])
-                            detail.director = ext.get('director', {})
-                            detail.save()
-                    except Exception:
-                        pass
+            detail_data = None
+            if include_details and tmdb_id:
+                try:
+                    ext = tmdb_service.get_extended_details(clean_t, year_str)
+                    if ext:
+                        detail_data = {
+                            'tmdb_id': tmdb_id,
+                            'overview': ext.get('overview', ''),
+                            'genres': ext.get('genres', []),
+                            'runtime': ext.get('runtime'),
+                            'backdrop_url': ext.get('backdrop_url') or backdrop_url,
+                            'tagline': ext.get('tagline', ''),
+                            'cast': ext.get('cast', []),
+                            'director': ext.get('director', {}),
+                        }
+                except Exception:
+                    pass
 
             has_poster_str = 'Poster found' if poster_url else 'No poster image'
-            return True, movie.display_title, has_poster_str, False
+            return {
+                'id': item['id'],
+                'group_key': item['group_key'],
+                'success': True,
+                'update_data': update_data,
+                'detail_data': detail_data,
+                'title': item['display_title'],
+                'extra': has_poster_str,
+                'cancelled': False,
+            }
 
-        # Execute concurrent tasks
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_movie = {executor.submit(process_movie, m): m for m in movies}
+        # Concurrency loop: non-blocking wait with frequent cancellation checks
+        executor = ThreadPoolExecutor(max_workers=workers)
+        pending = {executor.submit(process_movie_io, item): item for item in movie_items}
+        batch_to_save = []
 
-            for future in as_completed(future_to_movie):
+        try:
+            while pending:
                 if is_task_stopped():
                     stopped_early = True
                     self.stdout.write(self.style.WARNING(
                         "\n[STOPPED] Cancellation requested. Halting all worker threads..."
                     ))
-                    for f in future_to_movie:
+                    for f in pending:
                         f.cancel()
-                    executor.shutdown(wait=False, cancel_futures=True)
                     break
 
-                try:
-                    res = future.result()
-                    if len(res) >= 4 and res[3]:  # cancelled mid-flight
+                done, _ = concurrent.futures.wait(
+                    pending.keys(),
+                    timeout=0.5,
+                    return_when=concurrent.futures.FIRST_COMPLETED
+                )
+
+                for future in done:
+                    pending.pop(future, None)
+                    try:
+                        res = future.result()
+                    except Exception as e:
+                        failed_count += 1
                         continue
-                    success, title, extra = res[:3]
+
+                    if res.get('cancelled'):
+                        continue
+
+                    success = res.get('success', False)
+                    title = res.get('title', 'Unknown')
+                    extra = res.get('extra', '')
                     if success:
                         matched_count += 1
                     else:
                         failed_count += 1
+
+                    batch_to_save.append(res)
+
                     log_line = tracker.tick(success=success, title=title, extra=extra)
                     try:
                         self.stdout.write(log_line)
                     except UnicodeEncodeError:
                         self.stdout.write(log_line.encode('ascii', errors='replace').decode('ascii'))
-                except Exception as e:
-                    failed_count += 1
-                    self.stdout.write(self.style.ERROR(f"Error processing movie: {e}"))
+
+                    # Batch write strictly on the single main thread
+                    if len(batch_to_save) >= 20:
+                        self._save_batch(batch_to_save)
+                        batch_to_save = []
+        finally:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                executor.shutdown(wait=False)
+
+        if batch_to_save:
+            self._save_batch(batch_to_save)
 
         if stopped_early:
             self.stdout.write(self.style.WARNING(
@@ -177,3 +226,29 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(
                 f'\n[OK] Metadata fetch complete! Matched & enriched: {matched_count}/{total} movies ({failed_count} not found).'
             ))
+
+    def _save_batch(self, items: list):
+        """Perform atomic batch database writes strictly on the main thread."""
+        with transaction.atomic():
+            for item in items:
+                m_id = item['id']
+                if not item.get('success'):
+                    Movie.objects.filter(id=m_id).update(metadata_status='failed')
+                    continue
+
+                update_data = item.get('update_data', {})
+                group_key = item.get('group_key')
+                if group_key:
+                    Movie.objects.filter(group_key=group_key).update(**update_data)
+                else:
+                    Movie.objects.filter(id=m_id).update(**update_data)
+
+                detail_data = item.get('detail_data')
+                if detail_data:
+                    try:
+                        detail, _ = MovieDetail.objects.get_or_create(movie_id=m_id)
+                        for k, v in detail_data.items():
+                            setattr(detail, k, v)
+                        detail.save()
+                    except Exception:
+                        pass

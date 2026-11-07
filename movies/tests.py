@@ -246,9 +246,49 @@ class ManagementSecurityTests(TestCase):
         clean2, _ = clean_movie_title("Grand Theft Auto VI An Extended Look /")
         self.assertEqual(clean2, "Grand Theft Auto VI An Extended Look")
 
+    def test_clean_bracket_titles(self):
+        clean, year = clean_movie_title("[Rec] (2007) 1080p (Spain)")
+        self.assertEqual(clean, "Rec")
+        self.assertEqual(year, "2007")
+
+    def test_task_manager_completion_sets_100_percent(self):
+        task_manager.task_state['status'] = 'running'
+        task_manager.task_state['progress_percent'] = 45.0
+        # Simulating clean wrapper completion
+        with task_manager.state_lock:
+            task_manager.task_state['status'] = 'completed'
+            task_manager.task_state['progress_percent'] = 100.0
+            task_manager.task_state['remaining'] = 0
+        status = task_manager.get_status()
+        self.assertEqual(status['status'], 'completed')
+        self.assertEqual(status['progress_percent'], 100.0)
+        self.assertEqual(status['remaining'], 0)
+
     def test_fetch_imdb_rating_known_id(self):
         # Inception tt1375666
         rate, i_id, genres = fetch_imdb_rating_and_id("Inception", 2010, known_imdb_id="tt1375666")
         self.assertIsNotNone(rate)
         self.assertEqual(i_id, "tt1375666")
         self.assertGreater(rate, 8.0)
+
+    def test_fetch_commands_run_without_db_lock(self):
+        from django.core.management import call_command
+        import io
+        out = io.StringIO()
+        m = Movie.objects.create(
+            title="Inception 2010",
+            clean_title="Inception",
+            year=2010,
+            is_primary_copy=True,
+            metadata_status="missing"
+        )
+        call_command('fetch_missing_metadata', limit=1, workers=2, stdout=out)
+        m.refresh_from_db()
+        self.assertEqual(m.metadata_status, 'ok')
+        self.assertTrue(bool(m.poster_url))
+
+        # Now test IMDb rating fetch command
+        call_command('fetch_imdb_ratings', limit=1, workers=2, stdout=out)
+        m.refresh_from_db()
+        self.assertIsNotNone(m.imdb_rating)
+        self.assertTrue(m.imdb_id.startswith('tt'))

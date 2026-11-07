@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 import os
 import requests
 import re
@@ -37,13 +38,13 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--limit', type=int, default=500, help='Max movies to process (default: 500)')
         parser.add_argument('--all', action='store_true', help='Process all movies missing genres')
-        parser.add_argument('--workers', type=int, default=16, help='Concurrent worker threads (default: 16)')
+        parser.add_argument('--workers', type=int, default=4, help='Concurrent worker threads (default: 4)')
         parser.add_argument('--force', action='store_true', help='Re-fetch even if genres already exist')
 
     def handle(self, *args, **options):
         limit = options['limit']
         fetch_all = options['all']
-        workers = options['workers']
+        workers = options['workers'] or 4
         force = options['force']
 
         api_key = os.getenv('TMDB_API_KEY')
@@ -68,16 +69,32 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS('\n[OK] All targeted movies already have genres!'))
             return
 
+        # Pre-extract lightweight plain Python dicts to isolate threads from ORM
+        movie_items = [
+            {
+                'id': m.id,
+                'title': m.clean_title or m.title,
+                'display_title': m.display_title,
+                'year': m.year,
+                'imdb_id': m.imdb_id,
+                'group_key': m.group_key,
+            }
+            for m in movies
+        ]
+
         self.stdout.write(self.style.MIGRATE_HEADING(
             f'\nFetching genres for {total} movies ({workers} threads)...'
         ))
         tracker = ProgressTracker(total, desc="Genre Fetch")
 
-        def fetch_movie_genres(m):
+        def fetch_movie_genres_io(item: dict) -> dict:
+            """Pure HTTP network worker. Zero database reads/writes in worker threads."""
             if is_task_stopped():
-                return m.id, [], m.clean_title or m.title, None, True
+                return {'id': item['id'], 'cancelled': True, 'title': item['display_title']}
 
-            title = m.clean_title or m.title
+            title = item['title']
+            year = item['year']
+            imdb_id = item['imdb_id']
             found_genres = []
             tmdb_id = None
 
@@ -85,8 +102,8 @@ class Command(BaseCommand):
             try:
                 q = clean_title_for_search(title)
                 params = {'api_key': api_key, 'query': q}
-                if m.year:
-                    params['year'] = m.year
+                if year:
+                    params['year'] = year
                 r = requests.get('https://api.themoviedb.org/3/search/movie', params=params, timeout=5)
                 if r.status_code == 200:
                     data = r.json()
@@ -102,64 +119,85 @@ class Command(BaseCommand):
                 pass
 
             # 2. If no genres from TMDB, try Cinemeta via IMDb ID
-            if not found_genres and m.imdb_id and m.imdb_id.startswith('tt'):
+            if not found_genres and imdb_id and imdb_id.startswith('tt'):
                 try:
-                    r2 = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{m.imdb_id}.json', timeout=4)
+                    r2 = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{imdb_id}.json', timeout=4)
                     if r2.status_code == 200:
                         meta = r2.json().get('meta', {})
                         cinemeta_genres = meta.get('genres', [])
                         for cg in cinemeta_genres:
                             if cg and cg not in found_genres:
-                                # Normalize Sci-Fi -> Science Fiction
                                 norm = 'Science Fiction' if cg.lower() in ('sci-fi', 'scifi') else cg
                                 if norm not in found_genres:
                                     found_genres.append(norm)
                 except Exception:
                     pass
 
-            return m.id, found_genres, title, tmdb_id, False
+            return {
+                'id': item['id'],
+                'group_key': item['group_key'],
+                'genres': found_genres,
+                'tmdb_id': tmdb_id,
+                'title': item['display_title'],
+                'cancelled': False,
+            }
 
         success_count = 0
         batch_to_update = []
         stopped_early = False
 
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_movie = {executor.submit(fetch_movie_genres, m): m for m in movies}
+        executor = ThreadPoolExecutor(max_workers=workers)
+        pending = {executor.submit(fetch_movie_genres_io, item): item for item in movie_items}
 
-            for future in as_completed(future_to_movie):
+        try:
+            while pending:
                 if is_task_stopped():
                     stopped_early = True
                     self.stdout.write(self.style.WARNING(
                         "\n[STOPPED] Cancellation requested. Halting all worker threads..."
                     ))
-                    for f in future_to_movie:
+                    for f in pending:
                         f.cancel()
-                    executor.shutdown(wait=False, cancel_futures=True)
                     break
 
-                try:
-                    res = future.result()
-                    if len(res) >= 5 and res[4]:  # stopped mid-execution
+                done, _ = concurrent.futures.wait(
+                    pending.keys(),
+                    timeout=0.5,
+                    return_when=concurrent.futures.FIRST_COMPLETED
+                )
+
+                for future in done:
+                    pending.pop(future, None)
+                    try:
+                        res = future.result()
+                    except Exception:
                         continue
-                    m_id, genres, title, tmdb_id = res[:4]
-                except Exception:
-                    continue
 
-                ok = len(genres) > 0
-                if ok:
-                    success_count += 1
-                    batch_to_update.append((m_id, genres, tmdb_id))
+                    if res.get('cancelled'):
+                        continue
 
-                extra = ', '.join(genres[:3]) if ok else "No genre found"
-                log_line = tracker.tick(success=ok, title=title, extra=extra)
-                try:
-                    self.stdout.write(log_line)
-                except UnicodeEncodeError:
-                    self.stdout.write(log_line.encode('ascii', errors='replace').decode('ascii'))
+                    genres = res.get('genres') or []
+                    title = res.get('title', 'Unknown')
+                    ok = len(genres) > 0
+                    if ok:
+                        success_count += 1
+                        batch_to_update.append(res)
 
-                if len(batch_to_update) >= 40:
-                    self._save_batch(batch_to_update)
-                    batch_to_update = []
+                    extra = ', '.join(genres[:3]) if ok else "No genre found"
+                    log_line = tracker.tick(success=ok, title=title, extra=extra)
+                    try:
+                        self.stdout.write(log_line)
+                    except UnicodeEncodeError:
+                        self.stdout.write(log_line.encode('ascii', errors='replace').decode('ascii'))
+
+                    if len(batch_to_update) >= 25:
+                        self._save_batch(batch_to_update)
+                        batch_to_update = []
+        finally:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                executor.shutdown(wait=False)
 
         if batch_to_update:
             self._save_batch(batch_to_update)
@@ -173,23 +211,26 @@ class Command(BaseCommand):
                 f'\n[OK] Finished! Successfully fetched genres for {success_count}/{total} movies.'
             ))
 
-    def _save_batch(self, items):
-        """Save a batch of genre updates to Movie and all copies in same group."""
+    def _save_batch(self, items: list):
+        """Save a batch of genre updates strictly on the main thread."""
         with transaction.atomic():
-            for m_id, genres, tmdb_id in items:
-                movie = Movie.objects.filter(id=m_id).first()
-                if not movie:
+            for item in items:
+                m_id = item['id']
+                genres = item.get('genres') or []
+                if not genres:
                     continue
-
+                tmdb_id = item.get('tmdb_id')
+                group_key = item.get('group_key')
                 genre_str = ', '.join(genres)
-                if movie.group_key:
-                    Movie.objects.filter(group_key=movie.group_key).update(genres=genre_str)
+
+                if group_key:
+                    Movie.objects.filter(group_key=group_key).update(genres=genre_str)
                 else:
                     Movie.objects.filter(id=m_id).update(genres=genre_str)
 
-                # Update or create MovieDetail.genres if detail exists
+                # Update MovieDetail if exists
                 try:
-                    detail = MovieDetail.objects.filter(movie=movie).first()
+                    detail = MovieDetail.objects.filter(movie_id=m_id).first()
                     if detail:
                         detail.genres = genres
                         if tmdb_id and not detail.tmdb_id:
