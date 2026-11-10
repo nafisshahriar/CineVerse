@@ -502,7 +502,13 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
     imdb_rating = ext.get('imdb_rating') if ext else None
     if imdb_rating is None:
         imdb_res = fetch_imdb_rating_and_id(official_title or search_title, lookup_year, known_imdb_id=canonical_imdb_id)
-        imdb_rating = imdb_res[0] if (imdb_res and imdb_res[0]) else movie.imdb_rating
+        if imdb_res and imdb_res[0] is not None:
+            imdb_rating = imdb_res[0]
+        elif canonical_imdb_id:
+            # Verified IMDb ID has no rating yet on IMDb/Cinemeta (e.g. unrated/upcoming release)
+            imdb_rating = None
+        else:
+            imdb_rating = movie.imdb_rating
         if not canonical_imdb_id and imdb_res and len(imdb_res) > 1 and imdb_res[1]:
             canonical_imdb_id = imdb_res[1]
         if imdb_res and len(imdb_res) > 2 and imdb_res[2] and not genre_str:
@@ -531,8 +537,7 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
         update_fields['vote_count'] = vote_cnt
     if genre_str:
         update_fields['genres'] = genre_str
-    if imdb_rating is not None:
-        update_fields['imdb_rating'] = imdb_rating
+    update_fields['imdb_rating'] = imdb_rating
     if canonical_imdb_id:
         update_fields['imdb_id'] = canonical_imdb_id
     if ext and ext.get('runtime'):

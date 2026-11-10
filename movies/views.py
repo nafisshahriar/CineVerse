@@ -327,9 +327,22 @@ def movie_detail_ajax(request, movie_id):
     except MovieDetail.DoesNotExist:
         detail = None
 
+    needs_enrichment = (
+        not detail
+        or (not detail.cast and not detail.director)
+        or (movie.imdb_id and detail and detail.imdb_id != movie.imdb_id)
+    )
+
+    if needs_enrichment:
+        from movies.services import enrich_movie_metadata
+        enrich_movie_metadata(movie, include_details=True)
+        movie.refresh_from_db()
+        try:
+            detail = movie.detail
+        except MovieDetail.DoesNotExist:
+            detail = None
+
     needs_fetch = not detail or not detail.tmdb_id or (not detail.cast and not detail.director)
-    if movie.imdb_id and detail and detail.imdb_id != movie.imdb_id:
-        needs_fetch = True
 
     search_title = movie.clean_title or movie.title
     if needs_fetch:
@@ -436,7 +449,7 @@ def movie_detail_ajax(request, movie_id):
         g_list = res[2] if len(res) > 2 else []
         if rate:
             update_data = {'imdb_rating': rate}
-            if i_id:
+            if i_id and not movie.imdb_id:
                 update_data['imdb_id'] = i_id
             if g_list and not movie.genres:
                 update_data['genres'] = ', '.join(g_list)
@@ -446,11 +459,11 @@ def movie_detail_ajax(request, movie_id):
             else:
                 Movie.objects.filter(id=movie.id).update(**update_data)
             movie.imdb_rating = rate
-            if i_id:
+            if i_id and not movie.imdb_id:
                 movie.imdb_id = i_id
             if detail:
                 detail.imdb_rating = rate
-                if i_id:
+                if i_id and not detail.imdb_id:
                     detail.imdb_id = i_id
                 if g_list and not detail.genres:
                     detail.genres = g_list
@@ -928,3 +941,161 @@ def manage_movie_action_api(request, movie_id):
         return JsonResponse({'success': True, 'message': f"Deleted movie: {title} ({deleted_count} record(s) removed)"})
 
     return JsonResponse({'success': False, 'message': f"Unknown action: {action}"})
+
+
+@csrf_exempt
+@manage_auth_required
+def manage_batch_action_api(request):
+    """
+    Execute batch operations across multiple selected movies:
+    - refetch: enrich metadata for all selected movies
+    - delete: delete all selected movies and their server copies
+    - set_genre: set genre across all selected movies
+    - set_year: set release year across all selected movies
+    """
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'Method not allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        data = request.POST.dict()
+
+    action = data.get('action')
+    movie_ids = data.get('movie_ids', [])
+    if not movie_ids or not isinstance(movie_ids, list):
+        return JsonResponse({'success': False, 'message': 'No movies selected'}, status=400)
+
+    # Sanitize IDs
+    valid_ids = []
+    for mid in movie_ids:
+        try:
+            valid_ids.append(int(mid))
+        except (ValueError, TypeError):
+            pass
+
+    if not valid_ids:
+        return JsonResponse({'success': False, 'message': 'Invalid movie IDs'}, status=400)
+
+    from movies.models import Movie
+    movies = list(Movie.objects.filter(id__in=valid_ids))
+    if not movies:
+        return JsonResponse({'success': False, 'message': 'No matching movies found'}, status=404)
+
+    if action == 'delete':
+        deleted_count = 0
+        group_keys = [m.group_key for m in movies if m.group_key]
+        standalone_ids = [m.id for m in movies if not m.group_key]
+        if group_keys:
+            cnt, _ = Movie.objects.filter(group_key__in=group_keys).delete()
+            deleted_count += cnt
+        if standalone_ids:
+            cnt, _ = Movie.objects.filter(id__in=standalone_ids).delete()
+            deleted_count += cnt
+        return JsonResponse({
+            'success': True,
+            'message': f"Deleted {deleted_count} record(s) across {len(movies)} selected movies.",
+            'count': deleted_count,
+        })
+
+    elif action == 'refetch':
+        from movies.services import enrich_movie_metadata
+        success_count = 0
+        failed_count = 0
+        for m in movies:
+            try:
+                ok, _ = enrich_movie_metadata(m, include_details=True)
+                if ok:
+                    success_count += 1
+                else:
+                    failed_count += 1
+            except Exception:
+                failed_count += 1
+        return JsonResponse({
+            'success': True,
+            'message': f"Batch enriched: {success_count} succeeded, {failed_count} failed.",
+            'success_count': success_count,
+            'failed_count': failed_count,
+        })
+
+    elif action == 'set_genre':
+        genre_val = data.get('value', '').strip()
+        if not genre_val:
+            return JsonResponse({'success': False, 'message': 'Genre value is required'}, status=400)
+        group_keys = [m.group_key for m in movies if m.group_key]
+        ids = [m.id for m in movies]
+        Movie.objects.filter(id__in=ids).update(genres=genre_val)
+        if group_keys:
+            Movie.objects.filter(group_key__in=group_keys).update(genres=genre_val)
+        return JsonResponse({
+            'success': True,
+            'message': f"Updated genre to '{genre_val}' for {len(movies)} movies.",
+            'count': len(movies),
+        })
+
+    elif action == 'set_year':
+        year_val = data.get('value')
+        try:
+            year_int = int(year_val)
+        except (ValueError, TypeError):
+            return JsonResponse({'success': False, 'message': 'Valid year number is required'}, status=400)
+        group_keys = [m.group_key for m in movies if m.group_key]
+        ids = [m.id for m in movies]
+        Movie.objects.filter(id__in=ids).update(year=year_int, year_str=str(year_int))
+        if group_keys:
+            Movie.objects.filter(group_key__in=group_keys).update(year=year_int, year_str=str(year_int))
+        return JsonResponse({
+            'success': True,
+            'message': f"Updated year to {year_int} for {len(movies)} movies.",
+            'count': len(movies),
+        })
+
+    return JsonResponse({'success': False, 'message': f"Unknown batch action: {action}"}, status=400)
+
+
+@manage_auth_required
+def manage_database_export(request):
+    """Download local db.sqlite3 directly as a backup file."""
+    import os
+    from django.conf import settings
+    from django.http import FileResponse, Http404
+
+    db_path = settings.DATABASES['default']['NAME']
+    if not os.path.exists(db_path):
+        raise Http404("Database file not found.")
+
+    response = FileResponse(open(db_path, 'rb'), content_type='application/x-sqlite3')
+    response['Content-Disposition'] = 'attachment; filename="cineverse_db_backup.sqlite3"'
+    return response
+
+
+@csrf_exempt
+@manage_auth_required
+def manage_database_import(request):
+    """Restore db.sqlite3 from uploaded backup file."""
+    import os, shutil
+    from django.conf import settings
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'Method not allowed'}, status=405)
+
+    if 'db_file' not in request.FILES:
+        return JsonResponse({'success': False, 'message': 'No database file uploaded'}, status=400)
+
+    uploaded_file = request.FILES['db_file']
+    if not uploaded_file.name.endswith(('.sqlite3', '.db', '.sqlite')):
+        return JsonResponse({'success': False, 'message': 'Invalid file format. Must be a .sqlite3 file.'}, status=400)
+
+    target_path = settings.DATABASES['default']['NAME']
+    backup_path = f"{target_path}.bak"
+
+    try:
+        if os.path.exists(target_path):
+            shutil.copy2(target_path, backup_path)
+        with open(target_path, 'wb+') as destination:
+            for chunk in uploaded_file.chunks():
+                destination.write(chunk)
+        return JsonResponse({'success': True, 'message': 'Database imported successfully!'})
+    except Exception as e:
+        if os.path.exists(backup_path):
+            shutil.copy2(backup_path, target_path)
+        return JsonResponse({'success': False, 'message': f"Import failed: {str(e)}"}, status=500)

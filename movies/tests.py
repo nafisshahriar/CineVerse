@@ -503,3 +503,92 @@ class ManagementSecurityTests(TestCase):
         self.assertEqual(m.year, 1999)
         self.assertIsNotNone(m.imdb_rating)
         self.assertTrue(bool(m.poster_url))
+
+    def test_unrated_movie_metadata_does_not_mutate_to_similar_title(self):
+        """
+        Verify that an unrated title (e.g. 'The Get Out' tt32321803) preserves its
+        exact title and does NOT fall through to a different rated movie like 'Get Out' (tt5052448).
+        """
+        from movies.services import enrich_movie_metadata
+        m = Movie.objects.create(
+            title="The.Get.Out.2026.1080p.mkv",
+            clean_title="The Get Out",
+            year=2026,
+            imdb_id="tt32321803",
+            file_url="http://example.com/the_get_out.mkv",
+            metadata_status="missing"
+        )
+        ok, res = enrich_movie_metadata(m, include_details=True)
+        self.assertTrue(ok)
+        m.refresh_from_db()
+        self.assertEqual(m.clean_title, "The Get Out")
+        self.assertEqual(m.year, 2026)
+        self.assertEqual(m.imdb_id, "tt32321803")
+        self.assertIn("Action", m.genres)
+        self.assertTrue(bool(m.poster_url))
+
+    def test_detail_view_auto_enriches_missing_metadata(self):
+        """
+        Opening movie details automatically enriches missing metadata
+        without requiring the user to press any update button.
+        """
+        m = Movie.objects.create(
+            title="Inception.2010.1080p.mkv",
+            clean_title="Inception",
+            year=2010,
+            imdb_id="tt1375666",
+            file_url="http://example.com/inc_auto.mkv",
+            metadata_status="missing"
+        )
+        resp = self.client.get(f'/movie/{m.id}/detail/')
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.content)
+        self.assertTrue(data['success'])
+
+        m.refresh_from_db()
+        self.assertEqual(m.metadata_status, 'ok')
+        self.assertTrue(bool(m.poster_url))
+        self.assertIsNotNone(m.imdb_rating)
+        self.assertIn('overview', data)
+        self.assertTrue(len(data['overview']) > 10)
+
+    def test_batch_actions_api(self):
+        self.client.login(username='admin_user', password='Password123!')
+        m1 = Movie.objects.create(
+            title="Batch Movie 1", clean_title="Batch 1", year=2020, file_url="http://example.com/b1.mkv"
+        )
+        m2 = Movie.objects.create(
+            title="Batch Movie 2", clean_title="Batch 2", year=2020, file_url="http://example.com/b2.mkv"
+        )
+
+        # 1. Batch Set Genre
+        resp_g = self.client.post(
+            reverse('manage_batch_action_api'),
+            data=json.dumps({'action': 'set_genre', 'movie_ids': [m1.id, m2.id], 'value': 'Sci-Fi, Mystery'}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp_g.status_code, 200)
+        m1.refresh_from_db()
+        m2.refresh_from_db()
+        self.assertEqual(m1.genres, 'Sci-Fi, Mystery')
+        self.assertEqual(m2.genres, 'Sci-Fi, Mystery')
+
+        # 2. Batch Set Year
+        resp_y = self.client.post(
+            reverse('manage_batch_action_api'),
+            data=json.dumps({'action': 'set_year', 'movie_ids': [m1.id, m2.id], 'value': 2025}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp_y.status_code, 200)
+        m1.refresh_from_db()
+        m2.refresh_from_db()
+        self.assertEqual(m1.year, 2025)
+
+        # 3. Batch Delete
+        resp_d = self.client.post(
+            reverse('manage_batch_action_api'),
+            data=json.dumps({'action': 'delete', 'movie_ids': [m1.id, m2.id]}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp_d.status_code, 200)
+        self.assertFalse(Movie.objects.filter(id__in=[m1.id, m2.id]).exists())

@@ -1416,6 +1416,35 @@
             </button>
           </form>
         </div>
+
+        <!-- Operation 8: Database Backup & Device Migration -->
+        <div class="op-card" style="border-color: rgba(59, 130, 246, 0.25);">
+          <div class="op-card-header">
+            <div class="op-icon" style="background: rgba(59, 130, 246, 0.15); border-color: rgba(59, 130, 246, 0.35);">💾</div>
+            <div class="op-title-area">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <h3>Database Backup &amp; Device Migration</h3>
+                <span class="studio-badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3);">Portability</span>
+              </div>
+              <p>Export your full movie library and metadata as a <code>db.sqlite3</code> file to backup safely or migrate directly to your Raspberry Pi / server in seconds.</p>
+            </div>
+          </div>
+          <div class="op-form" style="display:flex; flex-direction:column; gap:12px;">
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+              <a href="/manage/api/database/export/" class="btn-hub-action primary" download style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                📥 Download Database Backup (.sqlite3)
+              </a>
+            </div>
+            <div class="form-row" style="margin-top:8px;">
+              <label for="importDbFile">Restore / Import Database File</label>
+              <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <input type="file" id="importDbFile" accept=".sqlite3,.db,.sqlite" class="form-input" style="padding:6px; max-width: 320px;">
+                <button class="btn-return-cinema" type="button" onclick="uploadDatabaseBackup()">📤 Restore File</button>
+              </div>
+              <span class="form-hint">Uploading a backup will safely archive your current database and load the uploaded library.</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1491,10 +1520,39 @@
           </div>
         </div>
 
+        <!-- Floating Batch Action Bar (shown when >= 1 checkbox checked) -->
+        <div id="inspectorBatchBar" class="batch-action-bar" style="display:none; align-items:center; justify-content:space-between; background: rgba(15, 23, 42, 0.96); border: 1px solid rgba(59, 130, 246, 0.45); padding: 12px 18px; border-radius: 10px; margin-bottom: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); flex-wrap: wrap; gap: 10px;">
+          <div style="display:flex; align-items:center; gap: 12px;">
+            <span style="font-weight: 600; color: #60a5fa; font-size: 0.92rem;">
+              ✓ Selected: <strong id="batchCountDisplay" style="color: #ffffff;">0</strong> movies
+            </span>
+            <button class="btn-return-cinema" type="button" onclick="deselectAllInspector()" style="padding: 4px 10px; font-size: 0.78rem;">
+              ✕ Deselect All
+            </button>
+          </div>
+          <div style="display:flex; align-items:center; gap: 8px; flex-wrap: wrap;">
+            <button class="btn-hub-action primary" type="button" onclick="executeBatchAction('refetch')" style="padding: 6px 14px; font-size: 0.82rem;">
+              🔄 Refetch Selected Metadata
+            </button>
+            <button class="btn-return-cinema" type="button" onclick="openBatchGenrePrompt()" style="padding: 6px 14px; font-size: 0.82rem;">
+              🏷️ Set Genre
+            </button>
+            <button class="btn-return-cinema" type="button" onclick="openBatchYearPrompt()" style="padding: 6px 14px; font-size: 0.82rem;">
+              📅 Set Year
+            </button>
+            <button class="btn-return-cinema" type="button" onclick="executeBatchAction('delete')" style="padding: 6px 14px; font-size: 0.82rem; background: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.45); color: #fca5a5;">
+              🗑️ Delete Selected
+            </button>
+          </div>
+        </div>
+
         <div class="table-responsive">
           <table class="studio-table">
             <thead>
               <tr>
+                <th style="width: 36px; text-align: center;">
+                  <input type="checkbox" id="selectAllInspector" onchange="toggleSelectAllInspector(this)" title="Select all on this page" style="cursor:pointer; width:16px; height:16px; accent-color: var(--accent);">
+                </th>
                 <th style="width: 44px;">Poster</th>
                 <th>Movie Title & Year</th>
                 <th>Server & Quality</th>
@@ -1506,7 +1564,7 @@
             </thead>
             <tbody id="inspectorTableBody">
               <tr>
-                <td colspan="7" style="text-align:center; padding: 32px; color: var(--text-muted);">
+                <td colspan="8" style="text-align:center; padding: 32px; color: var(--text-muted);">
                   Loading catalog records...
                 </td>
               </tr>
@@ -1914,7 +1972,8 @@
       currentInspectorPage = page;
       const q = document.getElementById('inspectorSearch').value.trim();
       const tbody = document.getElementById('inspectorTableBody');
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 24px;">Loading...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding: 24px;">Loading...</td></tr>';
+      deselectAllInspector();
 
       const qs = new URLSearchParams({
         page: page,
@@ -1931,12 +1990,15 @@
           document.getElementById('btnNextPage').disabled = data.current_page >= totalInspectorPages;
 
           if (!data.movies || !data.movies.length) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 32px; color: var(--text-muted);">No movies match the selected filters.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding: 32px; color: var(--text-muted);">No movies match the selected filters.</td></tr>';
             return;
           }
 
           tbody.innerHTML = data.movies.map(m => `
             <tr id="movie-row-${m.id}">
+              <td style="text-align: center;">
+                <input type="checkbox" class="inspector-item-cb" value="${m.id}" onchange="updateBatchActionBar()" style="cursor:pointer; width:16px; height:16px; accent-color: var(--accent);">
+              </td>
               <td>
                 ${m.poster_url ?
                   `<img class="thumb-poster" src="${m.poster_url}" alt="poster" loading="lazy">` :
@@ -1971,6 +2033,135 @@
             </tr>
           `).join('');
         });
+    }
+
+    function getSelectedInspectorIds() {
+      const cbs = document.querySelectorAll('.inspector-item-cb:checked');
+      return Array.from(cbs).map(cb => parseInt(cb.value, 10));
+    }
+
+    function updateBatchActionBar() {
+      const selected = getSelectedInspectorIds();
+      const bar = document.getElementById('inspectorBatchBar');
+      const counter = document.getElementById('batchCountDisplay');
+      if (bar) {
+        bar.style.display = selected.length > 0 ? 'flex' : 'none';
+      }
+      if (counter) {
+        counter.textContent = selected.length;
+      }
+      const selectAll = document.getElementById('selectAllInspector');
+      const allCbs = document.querySelectorAll('.inspector-item-cb');
+      if (selectAll && allCbs.length > 0) {
+        selectAll.checked = selected.length === allCbs.length;
+      }
+    }
+
+    function toggleSelectAllInspector(masterCb) {
+      const isChecked = masterCb.checked;
+      document.querySelectorAll('.inspector-item-cb').forEach(cb => {
+        cb.checked = isChecked;
+      });
+      updateBatchActionBar();
+    }
+
+    function deselectAllInspector() {
+      const selectAll = document.getElementById('selectAllInspector');
+      if (selectAll) selectAll.checked = false;
+      document.querySelectorAll('.inspector-item-cb').forEach(cb => {
+        cb.checked = false;
+      });
+      updateBatchActionBar();
+    }
+
+    function executeBatchAction(action, extraValue = null) {
+      const ids = getSelectedInspectorIds();
+      if (!ids.length) {
+        alert('Please select at least one movie first.');
+        return;
+      }
+
+      if (action === 'delete') {
+        if (!confirm(`Are you sure you want to delete ${ids.length} selected movie(s) and their server copies from CineVerse?`)) {
+          return;
+        }
+      }
+
+      const bodyData = {
+        action: action,
+        movie_ids: ids,
+      };
+      if (extraValue !== null) {
+        bodyData.value = extraValue;
+      }
+
+      fetch('/manage/api/movies/batch_action/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyData)
+      })
+      .then(r => {
+        if (!r.ok) throw new Error('Server returned status ' + r.status);
+        return r.json();
+      })
+      .then(res => {
+        if (res.success) {
+          alert('✓ ' + res.message);
+          deselectAllInspector();
+          loadInspectorMovies(currentInspectorPage);
+        } else {
+          alert('Batch action error: ' + res.message);
+        }
+      })
+      .catch(err => handleApiError(err, 'Failed to perform batch action'));
+    }
+
+    function openBatchGenrePrompt() {
+      const val = prompt('Enter genre(s) for selected movies (e.g. Action, Sci-Fi):');
+      if (val && val.trim()) {
+        executeBatchAction('set_genre', val.trim());
+      }
+    }
+
+    function openBatchYearPrompt() {
+      const val = prompt('Enter release year for selected movies (e.g. 2024):');
+      if (val && val.trim()) {
+        const yr = parseInt(val.trim(), 10);
+        if (isNaN(yr) || yr < 1900 || yr > 2035) {
+          alert('Please enter a valid 4-digit year.');
+          return;
+        }
+        executeBatchAction('set_year', yr);
+      }
+    }
+
+    function uploadDatabaseBackup() {
+      const fileInput = document.getElementById('importDbFile');
+      if (!fileInput || !fileInput.files.length) {
+        alert('Please select a .sqlite3 database file to upload.');
+        return;
+      }
+      if (!confirm('Warning: Restoring a database file will overwrite your current catalog data with the uploaded file. Do you wish to continue?')) {
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('db_file', fileInput.files[0]);
+
+      fetch('/manage/api/database/import/', {
+        method: 'POST',
+        body: formData
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          alert('✅ Database imported successfully! Refreshing page...');
+          window.location.reload();
+        } else {
+          alert('Import error: ' + res.message);
+        }
+      })
+      .catch(err => handleApiError(err, 'Error uploading database backup'));
     }
 
     function prevInspectorPage() {

@@ -535,32 +535,38 @@ def fetch_imdb_rating_and_id(title: str, year=None, known_imdb_id: str = None) -
     """
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-    def query_cinemeta(imdb_id: str) -> tuple[float | None, list]:
+    def query_cinemeta(imdb_id: str) -> tuple[float | None, list, bool]:
         """Fetch rating and genres from Cinemeta for a verified IMDb ID."""
         clean_id = normalize_imdb_id(imdb_id)
         if not clean_id:
-            return None, []
+            return None, [], False
         try:
             r = requests.get(f'https://v3-cinemeta.strem.io/meta/movie/{clean_id}.json', headers=headers, timeout=6)
             if r.status_code == 200:
                 meta = r.json().get('meta', {})
-                rate = meta.get('imdbRating')
-                genres = meta.get('genres') or meta.get('genre') or []
-                if rate:
-                    try:
-                        return float(rate), genres
-                    except (ValueError, TypeError):
-                        pass
+                if meta and (meta.get('name') or meta.get('id') or meta.get('imdb_id')):
+                    rate = meta.get('imdbRating')
+                    rate_float = None
+                    if rate:
+                        try:
+                            rate_float = float(rate)
+                        except (ValueError, TypeError):
+                            pass
+                    genres = meta.get('genres') or meta.get('genre') or []
+                    if isinstance(genres, str):
+                        genres = [g.strip() for g in genres.split(',') if g.strip()]
+                    return rate_float, genres, True
         except Exception:
             pass
-        return None, []
+        return None, [], False
 
     # 1. If known IMDb ID is provided (e.g. from TMDB or user)
     clean_known = normalize_imdb_id(known_imdb_id)
     if clean_known:
-        rate, genres = query_cinemeta(clean_known)
-        if rate is not None:
-            return rate, clean_known, genres
+        rate, genres, found = query_cinemeta(clean_known)
+        # CRITICAL: Never discard a known IMDb ID to fall through to fuzzy search!
+        # Even if unrated or new, the known ID is the authoritative target.
+        return rate, clean_known, genres
 
     # 2. Prepare title for search
     raw_clean = re.sub(r'[/\\:_#-]+', ' ', title or '')
@@ -603,8 +609,8 @@ def fetch_imdb_rating_and_id(title: str, year=None, known_imdb_id: str = None) -
     def check_candidate(item):
         imdb_id = item.get('id')
         if imdb_id and imdb_id.startswith('tt'):
-            rate, genres = query_cinemeta(imdb_id)
-            if rate is not None:
+            rate, genres, found = query_cinemeta(imdb_id)
+            if found or rate is not None:
                 return rate, imdb_id, genres
         return None, None, []
 
