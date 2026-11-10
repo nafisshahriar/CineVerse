@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: cineverse
+    env: python
+    plan: free
+    buildCommand: ./build.sh
+    startCommand: gunicorn moviedash.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 --log-file -
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_ALLOWED_HOSTS
+        value: "*"
