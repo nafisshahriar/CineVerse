@@ -75,7 +75,7 @@ class BackgroundTaskManager:
             'error_message': None,
         }
         self.logs = deque(maxlen=400)
-        self.state_lock = threading.Lock()
+        self.state_lock = threading.RLock()
 
     def is_running(self):
         with self.state_lock:
@@ -95,10 +95,16 @@ class BackgroundTaskManager:
             return state_copy
 
     def append_log(self, line: str):
+        if not line:
+            return
+        # Clean ANSI terminal escape codes if present
+        clean_line = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', line).strip()
+        if not clean_line:
+            return
         with self.state_lock:
             timestamp = datetime.now().strftime('%H:%M:%S')
-            self.logs.append(f"[{timestamp}] {line}")
-            self._parse_progress_from_line(line)
+            self.logs.append(f"[{timestamp}] {clean_line}")
+            self._parse_progress_from_line(clean_line)
 
     def _parse_progress_from_line(self, line: str):
         """Parse progress markers like [120/500 (24%) remaining: 380] or [1/5] ( 20.0%) | 4 left | ETA: 00m 04s."""
@@ -174,6 +180,12 @@ class BackgroundTaskManager:
                     pass
             return
 
+        # Server connection / starting indicator
+        conn_match = re.search(r'(?:Connecting to|Starting crawl at)\s*([^\n\r]+)', line)
+        if conn_match:
+            self.task_state['current_item'] = f"Connecting: {conn_match.group(1).strip()}"
+            return
+
         # Item indicator: e.g. "Processing: Inception (2010)" or "[OK] Title" or "[SKIPPED] Title"
         item_match = re.search(r'(?:Processing:|\[OK\]|\[FAIL\]|\[SKIPPED\]|\[SKIP\]|Processed:)\s*([^\(\n\r]+)', line)
         if item_match:
@@ -201,6 +213,8 @@ class BackgroundTaskManager:
 
         task_name = task_names.get(task_type, f"Task: {task_type}")
 
+        init_item = f"Connecting to {params.get('url')}..." if (params and params.get('url')) else f"Starting {task_name}..."
+
         with self.state_lock:
             self.logs.clear()
             self.task_state = {
@@ -211,7 +225,7 @@ class BackgroundTaskManager:
                 'progress_current': 0,
                 'progress_total': 0,
                 'progress_percent': 0.0,
-                'current_item': 'Initializing...',
+                'current_item': init_item,
                 'remaining': 0,
                 'speed': '',
                 'eta': '',
@@ -251,11 +265,12 @@ class BackgroundTaskManager:
         try:
             connections.close_all()
             self._execute_task(task_type, params)
+            is_stopped = False
             with self.state_lock:
                 if self.stop_requested.is_set():
+                    is_stopped = True
                     self.task_state['status'] = 'stopped'
                     self.task_state['finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    self.append_log("[STOPPED] Task was stopped by administrator.")
                 elif self.task_state['status'] in ('running', 'stopping'):
                     self.task_state['status'] = 'completed'
                     self.task_state['progress_percent'] = 100.0
@@ -264,7 +279,11 @@ class BackgroundTaskManager:
                     self.task_state['eta'] = '0s'
                     self.task_state['current_item'] = 'Complete - All items up to date'
                     self.task_state['finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    self.append_log("[SUCCESS] Task completed successfully!")
+
+            if is_stopped:
+                self.append_log("[STOPPED] Task was stopped by administrator.")
+            else:
+                self.append_log("[SUCCESS] Task completed successfully!")
         except Exception as e:
             import traceback
             err = str(e)

@@ -60,6 +60,8 @@ class Command(BaseCommand):
             remote_mod = extract_last_modified_from_text(raw)
             return self._should_skip_directory(href, remote_mod, force)
 
+        self.stdout.write(f"Connecting to media server: {root}...")
+
         try:
             for item in crawl_h5ai_recursive(root, per_request_timeout=timeout, max_items=max_items, should_skip_dir=skip_check):
                 if is_task_stopped():
