@@ -359,7 +359,7 @@ def movie_detail_ajax(request, movie_id):
 
             # Sync official clean title, year, poster, runtime to movie if resolved
             movie_updates = {}
-            if extended.get('title') and (not movie.clean_title or movie.clean_title == movie.title):
+            if extended.get('title'):
                 movie.clean_title = extended['title']
                 movie_updates['clean_title'] = extended['title']
             if extended.get('release_date') and len(extended['release_date']) >= 4 and extended['release_date'][:4].isdigit():
@@ -374,12 +374,16 @@ def movie_detail_ajax(request, movie_id):
                 movie.year_str = str(extended['year'])
                 movie_updates['year'] = extended['year']
                 movie_updates['year_str'] = str(extended['year'])
-            if extended.get('poster_url') and not movie.poster_url:
+            if extended.get('poster_url'):
                 movie.poster_url = extended['poster_url']
                 movie_updates['poster_url'] = extended['poster_url']
-            if extended.get('runtime') and not movie.runtime:
+            if extended.get('runtime'):
                 movie.runtime = extended['runtime']
                 movie_updates['runtime'] = extended['runtime']
+            if extended.get('genres'):
+                g_str = ', '.join(extended['genres']) if isinstance(extended['genres'], list) else str(extended['genres'])
+                movie.genres = g_str
+                movie_updates['genres'] = g_str
             if movie_updates:
                 movie.save(update_fields=list(movie_updates.keys()))
                 if movie.group_key:
@@ -949,6 +953,7 @@ def manage_movie_action_api(request, movie_id):
                 'imdb_rating': movie.imdb_rating,
                 'poster_url': movie.poster_url,
                 'genres': movie.genres,
+                'runtime': movie.runtime,
             }
         })
 

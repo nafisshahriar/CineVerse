@@ -522,7 +522,7 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
     update_fields = {
         'metadata_status': 'ok',
     }
-    if official_title and official_title != movie.title:
+    if official_title:
         update_fields['clean_title'] = official_title
     if official_year:
         update_fields['year'] = official_year

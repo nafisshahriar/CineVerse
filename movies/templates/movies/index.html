@@ -232,6 +232,7 @@
 
       let debounceTimer = null;
       let activeController = null;
+      let currentCinemaPage = 1;
 
       function buildQueryString(extraParams) {
         const params = new URLSearchParams();
@@ -264,7 +265,8 @@
       }
 
       function fetchMovies(page, pushHistory = true) {
-        const extra = page ? { page: page } : {};
+        if (page) currentCinemaPage = parseInt(page, 10);
+        const extra = page ? { page: page } : (currentCinemaPage > 1 ? { page: currentCinemaPage } : {});
         const qs = buildQueryString(extra);
 
         // Toggle clear search button
@@ -425,6 +427,159 @@
         }
       });
 
+      function updateMovieCardOnGrid(movieId, movieData) {
+        if (!movieId || !movieData) return;
+        const copyIds = [movieId];
+        if (movieData.id) copyIds.push(movieData.id);
+        if (movieData.copies && Array.isArray(movieData.copies)) {
+          movieData.copies.forEach(c => { if (c.id) copyIds.push(c.id); });
+        }
+        const selector = Array.from(new Set(copyIds)).map(id => `.card[data-movie-id="${id}"]`).join(', ');
+        const cards = document.querySelectorAll(selector);
+
+        cards.forEach(card => {
+          // 1. Update Title
+          const titleVal = movieData.title || movieData.clean_title;
+          if (titleVal) {
+            const titleEl = card.querySelector('.title');
+            if (titleEl) {
+              titleEl.textContent = titleVal;
+              titleEl.title = titleVal;
+            }
+            const cardLink = card.querySelector('.card-link');
+            if (cardLink) cardLink.title = 'Play ' + titleVal;
+          }
+
+          // 2. Update Poster
+          if (movieData.poster_url) {
+            const posterWrap = card.querySelector('.poster');
+            if (posterWrap) {
+              const existingImg = posterWrap.querySelector('img');
+              const noPoster = posterWrap.querySelector('.no-poster');
+              if (existingImg) {
+                existingImg.src = movieData.poster_url;
+                existingImg.alt = (titleVal || 'Movie') + ' poster';
+              } else if (noPoster) {
+                const img = document.createElement('img');
+                img.src = movieData.poster_url;
+                img.alt = (titleVal || 'Movie') + ' poster';
+                img.loading = 'lazy';
+                img.className = 'fade-in-poster';
+                noPoster.replaceWith(img);
+              } else {
+                const img = document.createElement('img');
+                img.src = movieData.poster_url;
+                img.alt = (titleVal || 'Movie') + ' poster';
+                img.loading = 'lazy';
+                img.className = 'fade-in-poster';
+                const overlay = posterWrap.querySelector('.poster-overlay');
+                if (overlay) {
+                  posterWrap.insertBefore(img, overlay);
+                } else {
+                  posterWrap.prepend(img);
+                }
+              }
+            }
+          }
+
+          // 3. Update Meta Row Elements
+          let metaRow = card.querySelector('.card-meta-row');
+          if (!metaRow) {
+            metaRow = document.createElement('div');
+            metaRow.className = 'card-meta-row';
+            const metaContainer = card.querySelector('.meta');
+            if (metaContainer) {
+              const infoBtn = metaContainer.querySelector('.info-btn');
+              if (infoBtn) {
+                metaContainer.insertBefore(metaRow, infoBtn);
+              } else {
+                metaContainer.appendChild(metaRow);
+              }
+            }
+          }
+
+          if (metaRow) {
+            // 3a. Year
+            if (movieData.year) {
+              let yBadge = metaRow.querySelector('.card-year');
+              if (yBadge) {
+                yBadge.textContent = movieData.year;
+              } else {
+                yBadge = document.createElement('span');
+                yBadge.className = 'card-pill card-year';
+                yBadge.title = 'Release Year';
+                yBadge.textContent = movieData.year;
+                metaRow.prepend(yBadge);
+              }
+            }
+
+            // 3b. Runtime
+            if (movieData.runtime) {
+              let rBadge = metaRow.querySelector('.card-runtime');
+              const h = Math.floor(movieData.runtime / 60);
+              const m = movieData.runtime % 60;
+              const rStr = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+              if (rBadge) {
+                rBadge.innerHTML = `<span class="pill-icon">⏱️</span>${rStr}`;
+              } else {
+                rBadge = document.createElement('span');
+                rBadge.className = 'card-pill card-runtime';
+                rBadge.title = 'Runtime';
+                rBadge.innerHTML = `<span class="pill-icon">⏱️</span>${rStr}`;
+                const yBadge = metaRow.querySelector('.card-year');
+                if (yBadge && yBadge.nextSibling) {
+                  metaRow.insertBefore(rBadge, yBadge.nextSibling);
+                } else {
+                  metaRow.appendChild(rBadge);
+                }
+              }
+            }
+
+            // 3c. Authentic IMDb Rating
+            if (movieData.imdb_rating !== undefined && movieData.imdb_rating !== null && movieData.imdb_rating !== '') {
+              const ratingNum = parseFloat(movieData.imdb_rating);
+              if (!isNaN(ratingNum) && ratingNum > 0) {
+                let ratingBadge = metaRow.querySelector('.card-imdb');
+                if (ratingBadge) {
+                  ratingBadge.innerHTML = `<span class="star-icon">★</span>${ratingNum.toFixed(1)}`;
+                } else {
+                  ratingBadge = document.createElement('span');
+                  ratingBadge.className = 'card-pill card-imdb';
+                  ratingBadge.title = 'IMDb Rating';
+                  ratingBadge.innerHTML = `<span class="star-icon">★</span>${ratingNum.toFixed(1)}`;
+                  const gBadge = metaRow.querySelector('.card-genre');
+                  if (gBadge) {
+                    metaRow.insertBefore(ratingBadge, gBadge);
+                  } else {
+                    metaRow.appendChild(ratingBadge);
+                  }
+                }
+              }
+            }
+
+            // 3d. Genres
+            const rawGenres = movieData.genres || movieData.primary_genre;
+            if (rawGenres) {
+              const pGenre = typeof rawGenres === 'string' ? rawGenres.split(',')[0].trim() : (Array.isArray(rawGenres) ? rawGenres[0] : '');
+              if (pGenre) {
+                let gBadge = metaRow.querySelector('.card-genre');
+                const fullGenresStr = typeof rawGenres === 'string' ? rawGenres : rawGenres.join(', ');
+                if (gBadge) {
+                  gBadge.textContent = pGenre;
+                  gBadge.title = fullGenresStr;
+                } else {
+                  gBadge = document.createElement('span');
+                  gBadge.className = 'card-pill card-genre';
+                  gBadge.textContent = pGenre;
+                  gBadge.title = fullGenresStr;
+                  metaRow.appendChild(gBadge);
+                }
+              }
+            }
+          }
+        });
+      }
+
       function showMovieDetails(movieId) {
         modal.hidden = false;
         modalBody.innerHTML = '<div class="loading-spinner"></div>';
@@ -434,6 +589,7 @@
           .then(r => r.json())
           .then(data => {
             if (data.success) {
+              updateMovieCardOnGrid(movieId, data);
               const runtimeStr = data.runtime ? `${Math.floor(data.runtime/60)}h ${data.runtime%60}m` : null;
               const budgetStr = data.budget ? `$${(data.budget/1_000_000).toFixed(1)}M` : null;
               const revenueStr = data.revenue ? `$${(data.revenue/1_000_000).toFixed(1)}M` : null;
@@ -665,61 +821,10 @@
           return r.json();
         })
         .then(data => {
-          if (data.success && data.movie && data.movie.poster_url) {
+          if (data.success && data.movie) {
             btn.innerHTML = '✓ Found!';
-            const card = btn.closest('.card') || document.querySelector(`.card[data-movie-id="${movieId}"]`);
-            if (card) {
-              const posterWrap = card.querySelector('.poster');
-              if (posterWrap) {
-                const noPoster = posterWrap.querySelector('.no-poster');
-                if (noPoster) {
-                  const img = document.createElement('img');
-                  img.src = data.movie.poster_url;
-                  img.alt = (data.movie.title || 'Movie') + ' poster';
-                  img.loading = 'lazy';
-                  img.className = 'fade-in-poster';
-                  posterWrap.replaceChild(img, noPoster);
-                }
-              }
-              if (data.movie.year) {
-                let yBadge = card.querySelector('.card-year');
-                if (yBadge) {
-                  yBadge.textContent = data.movie.year;
-                } else {
-                  const metaRow = card.querySelector('.card-meta-row');
-                  if (metaRow) {
-                    const newY = document.createElement('span');
-                    newY.className = 'card-pill card-year';
-                    newY.title = 'Release Year';
-                    newY.textContent = data.movie.year;
-                    metaRow.prepend(newY);
-                  }
-                }
-              }
-              if (data.movie.imdb_rating) {
-                let ratingBadge = card.querySelector('.card-imdb');
-                if (ratingBadge) {
-                  ratingBadge.innerHTML = `<span class="star-icon">★</span> ${data.movie.imdb_rating.toFixed(1)}`;
-                }
-              }
-              if (data.movie.runtime) {
-                let rBadge = card.querySelector('.card-runtime');
-                const h = Math.floor(data.movie.runtime / 60);
-                const m = data.movie.runtime % 60;
-                const rStr = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
-                if (rBadge) {
-                  rBadge.innerHTML = `<span class="pill-icon">⏱️</span> ${rStr}`;
-                }
-              }
-              if (data.movie.genres) {
-                let gBadge = card.querySelector('.card-genre');
-                const pGenre = data.movie.genres.split(',')[0].trim();
-                if (gBadge && pGenre) {
-                  gBadge.textContent = pGenre;
-                }
-              }
-            }
-            window.showToast('✓ Poster & metadata updated for ' + (data.movie.title || 'movie') + '!', 'success');
+            updateMovieCardOnGrid(movieId, data.movie);
+            window.showToast('✓ Metadata & artwork updated for ' + (data.movie.title || 'movie') + '!', 'success');
             const badge = document.getElementById('headerMissingBadge');
             if (badge) {
               let count = parseInt(badge.textContent, 10);
@@ -765,59 +870,10 @@
         .then(data => {
           if (data.success) {
             window.showToast('✅ Metadata & artwork updated successfully!', 'success');
-            showMovieDetails(movieId);
-
-            // Also update the card on the page grid
-            const card = document.querySelector(`.card[data-movie-id="${movieId}"]`);
-            if (card && data.movie) {
-              if (data.movie.poster_url) {
-                const posterWrap = card.querySelector('.poster');
-                const noPoster = posterWrap ? posterWrap.querySelector('.no-poster') : null;
-                if (noPoster) {
-                  const img = document.createElement('img');
-                  img.src = data.movie.poster_url;
-                  img.className = 'fade-in-poster';
-                  posterWrap.replaceChild(img, noPoster);
-                }
-              }
-              if (data.movie.year) {
-                let yBadge = card.querySelector('.card-year');
-                if (yBadge) {
-                  yBadge.textContent = data.movie.year;
-                } else {
-                  const metaRow = card.querySelector('.card-meta-row');
-                  if (metaRow) {
-                    const newY = document.createElement('span');
-                    newY.className = 'card-pill card-year';
-                    newY.title = 'Release Year';
-                    newY.textContent = data.movie.year;
-                    metaRow.prepend(newY);
-                  }
-                }
-              }
-              if (data.movie.imdb_rating) {
-                let badge = card.querySelector('.card-imdb');
-                if (badge) {
-                  badge.innerHTML = `<span class="star-icon">★</span> ${data.movie.imdb_rating.toFixed(1)}`;
-                }
-              }
-              if (data.movie.runtime) {
-                let rBadge = card.querySelector('.card-runtime');
-                const h = Math.floor(data.movie.runtime / 60);
-                const m = data.movie.runtime % 60;
-                const rStr = h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
-                if (rBadge) {
-                  rBadge.innerHTML = `<span class="pill-icon">⏱️</span> ${rStr}`;
-                }
-              }
-              if (data.movie.genres) {
-                let gBadge = card.querySelector('.card-genre');
-                const pGenre = data.movie.genres.split(',')[0].trim();
-                if (gBadge && pGenre) {
-                  gBadge.textContent = pGenre;
-                }
-              }
+            if (data.movie) {
+              updateMovieCardOnGrid(movieId, data.movie);
             }
+            showMovieDetails(movieId);
           } else {
             if (btn) {
               btn.disabled = false;
@@ -872,8 +928,10 @@
         .then(res => {
           if (res.success) {
             window.showToast('✅ Movie year and IMDb ID updated!', 'success');
+            if (res.movie) {
+              updateMovieCardOnGrid(movieId, res.movie);
+            }
             showMovieDetails(movieId);
-            fetchMovies(null, false);
           } else {
             alert('Update error: ' + res.message);
             if (btn) {
@@ -956,7 +1014,7 @@
                   pill.style.display = 'none';
                   if (fixBtn) fixBtn.style.display = 'inline-flex';
                 }, 6000);
-                fetchMovies(null, false);
+                fetchMovies(currentCinemaPage, false);
               } else {
                 pill.style.display = 'none';
                 if (fixBtn) fixBtn.style.display = 'inline-flex';
