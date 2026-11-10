@@ -139,3 +139,20 @@ class MovieDetail(models.Model):
 
     def __str__(self):
         return f"Details for {self.movie.title}"
+
+
+class MediaSource(models.Model):
+    """Configured media server sources (H5AI, Apache, Nginx, local NAS, Pi)"""
+    name = models.CharField(max_length=100, unique=True, db_index=True)
+    url = models.URLField(max_length=512)
+    source_type = models.CharField(max_length=50, default='h5ai', blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_crawled = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.url})"
+

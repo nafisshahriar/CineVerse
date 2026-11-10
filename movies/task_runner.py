@@ -246,12 +246,15 @@ class BackgroundTaskManager:
             url = params.get('url', '').strip()
             if not url:
                 raise ValueError("URL is required for crawling")
+            source = params.get('source', '').strip()
             force = bool(params.get('force', False))
             retry_failed = bool(params.get('retry_failed', False))
             max_items = params.get('max_items')
-            max_items = int(max_items) if max_items else None
+            max_items = int(max_items) if max_items and int(max_items) > 0 else None
 
             kwargs = {'url': url, 'force': force, 'retry_failed': retry_failed, 'stdout': out_stream, 'stderr': out_stream}
+            if source:
+                kwargs['source'] = source
             if max_items:
                 kwargs['max_items'] = max_items
             call_command('crawl_h5ai', **kwargs)

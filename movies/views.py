@@ -9,9 +9,9 @@ from django.core.paginator import Paginator
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.views import redirect_to_login
 from collections import defaultdict
-from .models import Movie, MovieDetail, CrawledDirectory, FailedParse
+from .models import Movie, MovieDetail, CrawledDirectory, FailedParse, MediaSource
 from .services import tmdb_service, fetch_poster_and_details
-from .utils import detect_language, fetch_imdb_rating_and_id
+from .utils import detect_language, fetch_imdb_rating_and_id, test_source_connection, normalize_crawl_url
 from .task_runner import task_manager
 
 
@@ -229,7 +229,10 @@ def index(request):
         'Indonesian', 'Thai', 'Tamil', 'Telugu', 'Malayalam', 'Bengali'
     ]
 
-    sources = ['Dhaka-Flix 14', 'Dhaka-Flix 7', 'E-Box']
+    db_sources = list(Movie.objects.exclude(source='').values_list('source', flat=True).distinct())
+    configured_sources = list(MediaSource.objects.filter(is_active=True).values_list('name', flat=True))
+    sources_set = set(db_sources + configured_sources + ['Dhaka-Flix 14', 'Dhaka-Flix 7', 'E-Box'])
+    sources = sorted(list(sources_set), key=lambda x: x.lower())
 
     resolutions = [
         ('4K', '4K UHD'),
@@ -642,6 +645,21 @@ def manage_auth_required(view_func):
     return _wrapped
 
 
+def get_configured_sources():
+    """Return all active MediaSource objects, seeding defaults if table is empty."""
+    sources = list(MediaSource.objects.filter(is_active=True))
+    if not sources and not MediaSource.objects.exists():
+        defaults = [
+            ('Dhaka-Flix 14', 'http://172.16.50.14/FTP-14/Movies/'),
+            ('Dhaka-Flix 7', 'http://172.16.50.7/FTP-7/Movies/'),
+            ('E-Box', 'http://10.16.100.244/'),
+        ]
+        for name, url in defaults:
+            MediaSource.objects.create(name=name, url=url, source_type='h5ai')
+        sources = list(MediaSource.objects.filter(is_active=True))
+    return sources
+
+
 @manage_auth_required
 def manage_dashboard(request):
     """Render the management & maintenance dashboard."""
@@ -668,6 +686,7 @@ def manage_dashboard(request):
 
     recent_crawls = list(CrawledDirectory.objects.order_by('-last_crawled')[:8])
     failed_count = FailedParse.objects.count()
+    configured_sources = get_configured_sources()
 
     context = {
         'total_files': total_files,
@@ -687,6 +706,7 @@ def manage_dashboard(request):
         'status_breakdown': status_breakdown,
         'recent_crawls': recent_crawls,
         'failed_count': failed_count,
+        'configured_sources': configured_sources,
         'task_status': task_manager.get_status(),
     }
     return render(request, 'movies/manage.html', context)
@@ -1099,3 +1119,112 @@ def manage_database_import(request):
         if os.path.exists(backup_path):
             shutil.copy2(backup_path, target_path)
         return JsonResponse({'success': False, 'message': f"Import failed: {str(e)}"}, status=500)
+
+
+@manage_auth_required
+def manage_sources_api(request):
+    """API endpoint to list all configured media sources."""
+    sources = get_configured_sources()
+    data = []
+    for s in sources:
+        count = Movie.objects.filter(source__iexact=s.name).count()
+        data.append({
+            'id': s.id,
+            'name': s.name,
+            'url': s.url,
+            'source_type': s.source_type,
+            'last_crawled': s.last_crawled.strftime('%Y-%m-%d %H:%M') if s.last_crawled else None,
+            'movie_count': count,
+        })
+    return JsonResponse({'success': True, 'sources': data})
+
+
+@csrf_exempt
+@manage_auth_required
+def manage_source_save_api(request):
+    """API endpoint to create or update a media source."""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'Method not allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        data = request.POST.dict()
+
+    name = data.get('name', '').strip()
+    url = data.get('url', '').strip()
+    source_type = data.get('source_type', 'h5ai').strip()
+
+    if not name:
+        return JsonResponse({'success': False, 'message': 'Source name is required.'}, status=400)
+    if not url:
+        return JsonResponse({'success': False, 'message': 'Source URL is required.'}, status=400)
+
+    norm_url = normalize_crawl_url(url)
+
+    source, created = MediaSource.objects.update_or_create(
+        name=name,
+        defaults={
+            'url': norm_url,
+            'source_type': source_type,
+            'is_active': True,
+        }
+    )
+    msg = f"Source '{name}' added successfully." if created else f"Source '{name}' updated successfully."
+    return JsonResponse({
+        'success': True,
+        'message': msg,
+        'source': {
+            'id': source.id,
+            'name': source.name,
+            'url': source.url,
+            'source_type': source.source_type,
+        }
+    })
+
+
+@csrf_exempt
+@manage_auth_required
+def manage_source_delete_api(request):
+    """API endpoint to delete a configured media source."""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'Method not allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        data = request.POST.dict()
+
+    source_id = data.get('id')
+    name = data.get('name')
+
+    deleted = 0
+    if source_id:
+        deleted, _ = MediaSource.objects.filter(id=source_id).delete()
+    elif name:
+        deleted, _ = MediaSource.objects.filter(name=name).delete()
+
+    if deleted:
+        return JsonResponse({'success': True, 'message': 'Source deleted successfully.'})
+    return JsonResponse({'success': False, 'message': 'Source not found.'}, status=404)
+
+
+@csrf_exempt
+@manage_auth_required
+def manage_source_test_api(request):
+    """API endpoint to test reachability and inspect directory contents of a URL."""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'Method not allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        data = request.POST.dict()
+
+    url = data.get('url', '').strip()
+    if not url:
+        return JsonResponse({'success': False, 'message': 'URL is required to test connection.'}, status=400)
+
+    result = test_source_connection(url)
+    return JsonResponse(result)
+

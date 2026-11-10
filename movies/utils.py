@@ -3,7 +3,7 @@ import os
 import time
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse, unquote
+from urllib.parse import urljoin, urlparse, unquote, urlunparse
 from datetime import datetime, timedelta, timezone as dt_timezone
 from django.utils import timezone
 
@@ -257,30 +257,140 @@ def clean_title_for_search(raw: str):
     return clean
 
 
-def list_h5ai_directory(url: str, timeout: int = 10):
-    resp = requests.get(url, timeout=timeout)
+CRAWL_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+}
+
+NON_DIR_EXTS = (
+    '.srt', '.sub', '.vtt', '.idx', '.nfo', '.txt', '.jpg', '.jpeg', '.png', '.gif',
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.torrent', '.iso', '.exe', '.bin', '.pdf',
+    '.html', '.php', '.css', '.js', '.json', '.xml'
+)
+
+
+def normalize_crawl_url(url: str) -> str:
+    """Normalize user-entered crawl URL, ensuring scheme and valid directory trailing slash."""
+    if not url:
+        return ''
+    u = url.strip()
+    if not re.match(r'^https?://', u, re.IGNORECASE):
+        u = 'http://' + u
+    parsed = urlparse(u)
+    path = parsed.path or '/'
+    # If path does not end with / and does not look like a file with an extension, append /
+    if not path.endswith('/'):
+        ext = os.path.splitext(path)[1]
+        if not ext:
+            path += '/'
+            u = urlunparse(parsed._replace(path=path))
+    return u
+
+
+def is_directory_link(href: str, text: str = '') -> bool:
+    """Determine whether a hyperlink points to a directory rather than a file."""
+    clean_href = href.split('?')[0].split('#')[0]
+    if clean_href.endswith('/') or (text and text.endswith('/')):
+        return True
+    low_href = clean_href.lower()
+    if any(low_href.endswith(ext) for ext in MEDIA_EXTS):
+        return False
+    if any(low_href.endswith(ext) for ext in NON_DIR_EXTS):
+        return False
+    last_segment = unquote(clean_href.rstrip('/').split('/')[-1])
+    # If no dot in the last path segment, it is almost certainly a directory
+    if '.' not in last_segment:
+        return True
+    return False
+
+
+def list_h5ai_directory(url: str, timeout: int = 10, session: requests.Session = None):
+    """
+    List contents of an H5AI, Apache, Nginx, or Caddy directory.
+    Supports both native H5AI JSON API and HTML directory fallbacks.
+    Returns list of (text, full_url, raw_line).
+    """
+    url = normalize_crawl_url(url)
+    req = session if session is not None else requests
+    resp = req.get(url, headers=CRAWL_HEADERS, timeout=timeout)
     resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, 'html.parser')
+
+    final_url = resp.url
+    if not final_url.endswith('/') and not os.path.splitext(urlparse(final_url).path)[1]:
+        final_url += '/'
+
     links = []
-    for row in soup.find_all(['tr', 'li', 'div']):
-        a = row.find('a', href=True)
-        if not a:
-            continue
-        href = a['href']
-        text = a.get_text(strip=True)
-        if not text or href in ('../',) or text in ('Parent Directory', '..'):
-            continue
-        raw_line = row.get_text(' ', strip=True)
-        links.append((text, urljoin(url, href), raw_line))
+
+    # 1. Native H5AI JSON API check
+    is_h5ai = '_h5ai' in resp.text or 'data-h5ai' in resp.text or 'powered by h5ai' in resp.text.lower()
+    if is_h5ai:
+        try:
+            parsed_path = urlparse(final_url).path or '/'
+            api_endpoint = urljoin(final_url, '/_h5ai/public/php/api.php')
+            post_data = {'action': 'get', 'items': [{'href': parsed_path, 'what': 1}]}
+            api_resp = req.post(api_endpoint, json=post_data, headers=CRAWL_HEADERS, timeout=timeout)
+            if api_resp.status_code == 200:
+                data = api_resp.json()
+                for it in data.get('items', []):
+                    item_href = it.get('href', '')
+                    if not item_href or item_href == parsed_path:
+                        continue
+                    item_full = urljoin(final_url, item_href)
+                    item_text = unquote(item_href.rstrip('/').split('/')[-1])
+                    if item_text in ('..', '../', 'Parent Directory', ''):
+                        continue
+                    raw_info = f"{item_text} {it.get('time', '')} {it.get('size', '')}"
+                    links.append((item_text, item_full, raw_info))
+        except Exception:
+            pass
+
+    # 2. HTML parsing (Apache, Nginx, Caddy, Lighttpd, H5AI fallback tables)
     if not links:
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        base_netloc = urlparse(final_url).netloc
+
         for a in soup.find_all('a', href=True):
-            href = a['href']
-            text = a.get_text(strip=True)
-            if not text or href in ('../',) or text in ('Parent Directory', '..'):
+            raw_href = a['href'].strip()
+            text = a.get_text(' ', strip=True)
+
+            if not raw_href or not text:
                 continue
-            raw_line = a.find_parent().get_text(' ', strip=True) if a.find_parent() else ''
-            links.append((text, urljoin(url, href), raw_line))
-    return links
+            # Ignore sorting query parameters, fragments, and javascript links
+            if raw_href.startswith(('?', '#', 'javascript:', 'mailto:')):
+                continue
+
+            low_text = text.lower()
+            if low_text in ('parent directory', '..', '../', '.', '[to parent directory]', 'back') or low_text.startswith('parent directory'):
+                continue
+            if raw_href in ('../', '/', '..', '.'):
+                continue
+            if raw_href.endswith(('.css', '.js')) or '/icons/' in raw_href or '_h5ai' in raw_href:
+                continue
+
+            full_href = urljoin(final_url, raw_href)
+            full_parsed = urlparse(full_href)
+
+            if full_parsed.netloc and full_parsed.netloc != base_netloc:
+                continue
+            if full_href.rstrip('/') == final_url.rstrip('/'):
+                continue
+
+            if is_directory_link(full_href, text) and not full_href.endswith('/'):
+                full_href += '/'
+
+            raw_line = a.find_parent().get_text(' ', strip=True) if a.find_parent() else text
+            links.append((text, full_href, raw_line))
+
+    # De-duplicate preserving discovered order
+    seen_urls = set()
+    unique_links = []
+    for t, u, r in links:
+        if u not in seen_urls:
+            seen_urls.add(u)
+            unique_links.append((t, u, r))
+
+    return unique_links
 
 
 def extract_last_modified_from_text(raw_line: str):
@@ -315,29 +425,67 @@ def extract_last_modified_from_text(raw_line: str):
 
 
 def crawl_h5ai_recursive(root_url: str, per_request_timeout: int = 8, max_items: int = None):
+    """
+    Recursively explore directory trees and media files from root_url.
+    Yields dictionary for each discovered media file or directory.
+    Yields error item if root_url cannot be reached so callers get immediate feedback.
+    """
+    root_url = normalize_crawl_url(root_url)
+    if not root_url:
+        yield {'error': True, 'message': 'No URL provided for crawling.'}
+        return
+
+    session = requests.Session()
+    session.headers.update(CRAWL_HEADERS)
+
     seen = set()
     queue = [root_url]
     yielded = 0
+
     while queue and (max_items is None or yielded < max_items):
         cur = queue.pop(0)
         if cur in seen:
             continue
         seen.add(cur)
+
         try:
-            items = list_h5ai_directory(cur, timeout=per_request_timeout)
-        except requests.exceptions.Timeout:
+            items = list_h5ai_directory(cur, timeout=per_request_timeout, session=session)
+        except requests.exceptions.Timeout as e:
+            if cur == root_url:
+                yield {'error': True, 'message': f"Connection timed out reaching root URL: {cur}"}
             continue
-        except Exception:
+        except requests.exceptions.RequestException as e:
+            if cur == root_url:
+                yield {'error': True, 'message': f"Failed to connect to root URL {cur}: {e}"}
             continue
+        except Exception as e:
+            if cur == root_url:
+                yield {'error': True, 'message': f"Unexpected error reading root URL {cur}: {e}"}
+            continue
+
+        if cur == root_url and not items:
+            yield {'warning': True, 'message': f"Connected to {cur}, but found 0 directory items or media files."}
+
+        cur_dir_name = unquote(urlparse(cur).path.rstrip('/').split('/')[-1])
+
         for text, href, raw in items:
-            is_dir = href.endswith('/')
+            is_dir = is_directory_link(href, text)
+            clean_name = text.strip(' /\\').lower()
+            if clean_name in IGNORED_DIRS:
+                continue
+
             yielded += 1
-            yield {'name': text, 'url': href, 'is_dir': is_dir, 'raw': raw}
+            yield {
+                'name': text,
+                'url': href,
+                'is_dir': is_dir,
+                'raw': raw,
+                'dir_name': cur_dir_name,
+                'directory_url': cur,
+            }
+
             if is_dir:
-                # Skip known junk directories
-                norm_text = text.strip(' /\\').lower()
-                if norm_text not in IGNORED_DIRS:
-                    queue.append(href)
+                queue.append(href)
 
 
 def find_media_in_directory(url: str, timeout: int = 6):
@@ -351,6 +499,96 @@ def find_media_in_directory(url: str, timeout: int = 6):
         if any(low.endswith(ext) for ext in MEDIA_EXTS):
             media.append((text, href, raw))
     return media
+
+
+def test_source_connection(url: str, timeout: int = 8) -> dict:
+    """
+    Test connectivity to a media server / directory URL.
+    Returns structured result with server type, status, and item counts.
+    """
+    norm_url = normalize_crawl_url(url)
+    if not norm_url:
+        return {'success': False, 'message': 'Please provide a valid URL.'}
+
+    session = requests.Session()
+    session.headers.update(CRAWL_HEADERS)
+
+    try:
+        resp = session.get(norm_url, timeout=timeout)
+        resp.raise_for_status()
+    except requests.exceptions.SSLError:
+        try:
+            resp = session.get(norm_url, timeout=timeout, verify=False)
+            resp.raise_for_status()
+        except Exception as e:
+            return {'success': False, 'message': f"SSL certificate verification failed: {e}"}
+    except requests.exceptions.Timeout:
+        return {'success': False, 'message': f"Connection timed out after {timeout}s. Verify server IP and network access."}
+    except requests.exceptions.ConnectionError:
+        return {'success': False, 'message': "Connection refused. Server may be offline, firewalled, or on an unreachable subnet."}
+    except requests.exceptions.HTTPError as e:
+        status = resp.status_code if 'resp' in locals() else None
+        return {'success': False, 'status_code': status, 'message': f"HTTP Error {status}: {e}"}
+    except Exception as e:
+        return {'success': False, 'message': f"Connection failed: {e}"}
+
+    final_url = resp.url
+    is_direct_media = any(final_url.lower().endswith(ext) for ext in MEDIA_EXTS)
+    if is_direct_media:
+        return {
+            'success': True,
+            'server_type': 'Direct Media Stream',
+            'status_code': resp.status_code,
+            'url': final_url,
+            'items_count': 1,
+            'media_count': 1,
+            'dir_count': 0,
+            'sample_items': [unquote(os.path.basename(urlparse(final_url).path))],
+            'message': 'Connected directly to playable media file!'
+        }
+
+    try:
+        items = list_h5ai_directory(final_url, timeout=timeout, session=session)
+        media_count = sum(1 for text, href, _ in items if not is_directory_link(href, text) and any(href.lower().endswith(ext) for ext in MEDIA_EXTS))
+        dir_count = sum(1 for text, href, _ in items if is_directory_link(href, text))
+
+        server_label = 'Open Directory'
+        text_lower = resp.text.lower()
+        if '_h5ai' in text_lower or 'powered by h5ai' in text_lower:
+            server_label = 'H5AI Directory Server'
+        elif 'apache' in resp.headers.get('server', '').lower() or 'index of' in text_lower:
+            server_label = 'Apache AutoIndex'
+        elif 'nginx' in resp.headers.get('server', '').lower():
+            server_label = 'Nginx AutoIndex'
+        elif 'caddy' in resp.headers.get('server', '').lower():
+            server_label = 'Caddy File Server'
+
+        samples = [t for t, _, _ in items[:6]]
+
+        return {
+            'success': True,
+            'server_type': server_label,
+            'status_code': resp.status_code,
+            'url': final_url,
+            'items_count': len(items),
+            'media_count': media_count,
+            'dir_count': dir_count,
+            'sample_items': samples,
+            'message': f"Successfully reached {server_label}! Detected {dir_count} directories and {media_count} media files."
+        }
+    except Exception as e:
+        return {
+            'success': True,
+            'server_type': 'HTTP Server (Listing unparsed)',
+            'status_code': resp.status_code,
+            'url': final_url,
+            'items_count': 0,
+            'media_count': 0,
+            'dir_count': 0,
+            'sample_items': [],
+            'message': f"Server reachable (HTTP {resp.status_code}), but directory listing parser returned: {e}"
+        }
+
 
 
 TMDB_GENRES = {

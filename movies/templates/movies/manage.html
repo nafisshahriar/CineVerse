@@ -1211,29 +1211,83 @@
           </form>
         </div>
 
-        <!-- Operation 1: Crawl H5AI -->
-        <div class="op-card">
+        <!-- Operation 1: Crawl & Manage Server Sources -->
+        <div class="op-card" id="cardCrawlSource" style="border-color: rgba(59, 130, 246, 0.35);">
           <div class="op-card-header">
-            <div class="op-icon">🕷️</div>
+            <div class="op-icon" style="background: rgba(59, 130, 246, 0.15); border-color: rgba(59, 130, 246, 0.4);">🕷️</div>
             <div class="op-title-area">
-              <h3>Crawl & Import from H5AI</h3>
-              <p>Scan network H5AI directory servers, parse titles/years/qualities, and import new movie records.</p>
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <h3>Crawl &amp; Import from Sources</h3>
+                <span class="studio-badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3);">Multi-Server</span>
+              </div>
+              <p>Scan network H5AI directory servers, Apache/Nginx open directories, local NAS, or Raspberry Pi media folders to import and index movies.</p>
             </div>
           </div>
           <form id="formCrawl" class="op-form" onsubmit="return false;">
             <div class="form-row">
-              <label for="crawlUrl">Root H5AI URL</label>
-              <input id="crawlUrl" class="form-input" type="url" placeholder="http://172.x.x.x/movies/" required>
-              <div class="preset-chips">
-                <span class="preset-chip" onclick="setPresetUrl('http://172.16.50.14/FTP-14/Movies/')">Dhaka-Flix 14</span>
-                <span class="preset-chip" onclick="setPresetUrl('http://172.16.50.7/FTP-7/Movies/')">Dhaka-Flix 7</span>
-                <span class="preset-chip" onclick="setPresetUrl('http://10.16.100.244/')">E-Box</span>
+              <label for="crawlUrl">Root Directory or Server URL</label>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <input id="crawlUrl" class="form-input" type="url" placeholder="http://192.168.1.x:8080/movies/ or http://172.x.x.x/" required style="flex:1; min-width:240px;">
+                <button class="btn-return-cinema" type="button" onclick="testConnectionFromInput()" style="white-space:nowrap; padding: 8px 14px; font-size: 0.82rem;">
+                  🔍 Test Connection
+                </button>
+              </div>
+              <div id="testConnResult" style="display:none; margin-top:8px; font-size:0.82rem; padding:8px 12px; border-radius:6px;"></div>
+
+              <div style="margin-top: 10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                  <span style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); font-weight:600;">Saved Server Sources:</span>
+                  <button type="button" class="btn-return-cinema" onclick="toggleSourceManager()" style="padding: 2px 8px; font-size: 0.72rem;">
+                    ⚙️ Manage Sources
+                  </button>
+                </div>
+                <div id="sourcePresetChips" class="preset-chips">
+                  {% for s in configured_sources %}
+                  <span class="preset-chip" onclick="setPresetSource('{{ s.name|escapejs }}', '{{ s.url|escapejs }}')">
+                    🌐 {{ s.name }}
+                  </span>
+                  {% empty %}
+                  <span class="preset-chip" onclick="setPresetSource('Dhaka-Flix 14', 'http://172.16.50.14/FTP-14/Movies/')">Dhaka-Flix 14</span>
+                  <span class="preset-chip" onclick="setPresetSource('Dhaka-Flix 7', 'http://172.16.50.7/FTP-7/Movies/')">Dhaka-Flix 7</span>
+                  <span class="preset-chip" onclick="setPresetSource('E-Box', 'http://10.16.100.244/')">E-Box</span>
+                  {% endfor %}
+                </div>
               </div>
             </div>
+
+            <!-- Inline Source Manager Drawer (collapsible) -->
+            <div id="sourceManagerDrawer" style="display:none; background: rgba(15, 23, 42, 0.7); border: 1px dashed rgba(59, 130, 246, 0.35); border-radius: 8px; padding: 12px; margin-bottom: 14px;">
+              <div style="font-weight: 600; font-size: 0.85rem; color: #93c5fd; margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center;">
+                <span>➕ Add / Configure Media Sources</span>
+                <span style="cursor:pointer; color:var(--text-muted); font-size:0.9rem;" onclick="toggleSourceManager()">✕</span>
+              </div>
+              <div style="display:flex; gap: 8px; align-items:center; flex-wrap:wrap; margin-bottom: 10px;">
+                <input id="newSourceName" class="form-input" type="text" placeholder="Source Name (e.g. My NAS, Raspberry Pi)" style="flex:1; min-width:160px;">
+                <input id="newSourceUrl" class="form-input" type="url" placeholder="http://192.168.1.100:8080/movies/" style="flex:2; min-width:220px;">
+                <button type="button" class="btn-hub-action primary" onclick="saveNewSource()" style="padding: 8px 14px; font-size: 0.82rem; white-space:nowrap;">
+                  💾 Save Source
+                </button>
+              </div>
+              <div id="sourcesListTableContainer" style="max-height: 160px; overflow-y: auto;">
+                <!-- Dynamically populated configured sources with delete buttons -->
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label for="crawlSource">Source Server Name / Tag (Optional)</label>
+              <input id="crawlSource" class="form-input" type="text" placeholder="e.g. Dhaka-Flix 14, Raspberry Pi, Home NAS">
+              <span class="form-hint">Label this server. All imported movies will be tagged with this source for multi-server filtering.</span>
+            </div>
+
             <div class="form-row">
               <label for="crawlLimit">Scan Limit (optional)</label>
               <input id="crawlLimit" class="form-input" type="number" placeholder="Leave empty for all">
             </div>
+
+            <label class="checkbox-label">
+              <input type="checkbox" id="crawlSavePreset" checked>
+              <span>Save this source server to presets for future quick crawls</span>
+            </label>
             <label class="checkbox-label">
               <input type="checkbox" id="crawlForce">
               <span>Force re-crawl unchanged directories</span>
@@ -1242,8 +1296,9 @@
               <input type="checkbox" id="crawlRetryFailed">
               <span>Retry previously failed parses</span>
             </label>
+
             <button class="btn-op-submit" type="button" onclick="startCrawlTask()">
-              ▶ Launch Crawler & Import
+              ▶ Launch Crawler &amp; Import
             </button>
           </form>
         </div>
@@ -1666,8 +1721,158 @@
       switchTab(initialTab);
     }
 
+    function setPresetSource(name, url) {
+      document.getElementById('crawlUrl').value = url;
+      if (document.getElementById('crawlSource')) {
+        document.getElementById('crawlSource').value = name;
+      }
+    }
+
     function setPresetUrl(url) {
       document.getElementById('crawlUrl').value = url;
+    }
+
+    function testConnectionFromInput() {
+      const urlInput = document.getElementById('crawlUrl');
+      const resBox = document.getElementById('testConnResult');
+      const url = urlInput.value.trim();
+      if (!url) {
+        alert('Please enter a server or directory URL first.');
+        return;
+      }
+
+      resBox.style.display = 'block';
+      resBox.style.background = 'rgba(59, 130, 246, 0.15)';
+      resBox.style.border = '1px solid rgba(59, 130, 246, 0.35)';
+      resBox.style.color = '#93c5fd';
+      resBox.innerHTML = '⏳ Testing connection to ' + escapeHtml(url) + '...';
+
+      fetch('/manage/api/sources/test/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url })
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          resBox.style.background = 'rgba(16, 185, 129, 0.15)';
+          resBox.style.border = '1px solid rgba(16, 185, 129, 0.4)';
+          resBox.style.color = '#6ee7b7';
+          let samplesHtml = '';
+          if (res.sample_items && res.sample_items.length > 0) {
+            samplesHtml = '<div style="margin-top:4px; font-size:0.75rem; color:var(--text-muted);">' +
+              '<strong>Preview items:</strong> ' + res.sample_items.map(escapeHtml).join(', ') + '</div>';
+          }
+          resBox.innerHTML = '🟢 <strong>Connected!</strong> ' + escapeHtml(res.message) + samplesHtml;
+        } else {
+          resBox.style.background = 'rgba(239, 68, 68, 0.15)';
+          resBox.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+          resBox.style.color = '#fca5a5';
+          resBox.innerHTML = '🔴 <strong>Connection Failed:</strong> ' + escapeHtml(res.message);
+        }
+      })
+      .catch(err => {
+        resBox.style.background = 'rgba(239, 68, 68, 0.15)';
+        resBox.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+        resBox.style.color = '#fca5a5';
+        resBox.innerHTML = '🔴 <strong>Error:</strong> ' + escapeHtml(err.message);
+      });
+    }
+
+    function toggleSourceManager() {
+      const drawer = document.getElementById('sourceManagerDrawer');
+      if (drawer.style.display === 'none') {
+        drawer.style.display = 'block';
+        loadSourcesList();
+      } else {
+        drawer.style.display = 'none';
+      }
+    }
+
+    function loadSourcesList() {
+      const container = document.getElementById('sourcesListTableContainer');
+      container.innerHTML = '<span style="font-size:0.78rem; color:var(--text-muted);">Loading sources...</span>';
+
+      fetch('/manage/api/sources/')
+        .then(r => r.json())
+        .then(res => {
+          if (!res.sources || res.sources.length === 0) {
+            container.innerHTML = '<span style="font-size:0.78rem; color:var(--text-muted);">No custom sources saved yet.</span>';
+            return;
+          }
+
+          let html = '<table class="studio-table" style="font-size:0.78rem; margin:0;"><thead><tr>' +
+            '<th>Source Name</th><th>URL</th><th>Indexed Movies</th><th>Action</th></tr></thead><tbody>';
+
+          res.sources.forEach(s => {
+            html += '<tr>' +
+              '<td><strong style="color:#60a5fa; cursor:pointer;" onclick="setPresetSource(\'' + escapeHtml(s.name) + '\', \'' + escapeHtml(s.url) + '\')">' + escapeHtml(s.name) + '</strong></td>' +
+              '<td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' + escapeHtml(s.url) + '">' + escapeHtml(s.url) + '</td>' +
+              '<td>' + s.movie_count + '</td>' +
+              '<td><button type="button" class="btn-return-cinema" style="padding:2px 6px; font-size:0.72rem; color:#f87171;" onclick="deleteSource(' + s.id + ', \'' + escapeHtml(s.name) + '\')">🗑️ Delete</button></td>' +
+              '</tr>';
+          });
+          html += '</tbody></table>';
+          container.innerHTML = html;
+
+          const chipsContainer = document.getElementById('sourcePresetChips');
+          if (chipsContainer) {
+            chipsContainer.innerHTML = res.sources.map(s => 
+              '<span class="preset-chip" onclick="setPresetSource(\'' + escapeHtml(s.name) + '\', \'' + escapeHtml(s.url) + '\')">🌐 ' + escapeHtml(s.name) + '</span>'
+            ).join('');
+          }
+        })
+        .catch(err => {
+          container.innerHTML = '<span style="color:#f87171; font-size:0.78rem;">Error loading sources: ' + escapeHtml(err.message) + '</span>';
+        });
+    }
+
+    function saveNewSource() {
+      const nameInput = document.getElementById('newSourceName');
+      const urlInput = document.getElementById('newSourceUrl');
+      const name = nameInput.value.trim();
+      const url = urlInput.value.trim();
+
+      if (!name || !url) {
+        alert('Please provide both Source Name and Root URL.');
+        return;
+      }
+
+      fetch('/manage/api/sources/save/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, url: url })
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          nameInput.value = '';
+          urlInput.value = '';
+          loadSourcesList();
+          alert(res.message);
+        } else {
+          alert('Could not save source: ' + res.message);
+        }
+      })
+      .catch(err => handleApiError(err, 'Failed to save source'));
+    }
+
+    function deleteSource(id, name) {
+      if (!confirm('Are you sure you want to remove source "' + name + '"?')) return;
+      fetch('/manage/api/sources/delete/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id, name: name })
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          loadSourcesList();
+        } else {
+          alert('Could not delete source: ' + res.message);
+        }
+      })
+      .catch(err => handleApiError(err, 'Failed to delete source'));
     }
 
     // ============================================================
@@ -1846,12 +2051,28 @@
 
     function startCrawlTask() {
       const url = document.getElementById('crawlUrl').value.trim();
-      if (!url) return alert('Please enter a valid H5AI URL.');
+      if (!url) return alert('Please enter a valid server or directory URL.');
+      const source = document.getElementById('crawlSource') ? document.getElementById('crawlSource').value.trim() : '';
       const limit = document.getElementById('crawlLimit').value;
       const force = document.getElementById('crawlForce').checked;
       const retry = document.getElementById('crawlRetryFailed').checked;
+      const savePreset = document.getElementById('crawlSavePreset') ? document.getElementById('crawlSavePreset').checked : false;
 
-      triggerTask('crawl', { url: url, max_items: limit, force: force, retry_failed: retry });
+      if (savePreset && source && url) {
+        fetch('/manage/api/sources/save/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: source, url: url })
+        }).catch(() => {});
+      }
+
+      triggerTask('crawl', {
+        url: url,
+        source: source,
+        max_items: limit ? parseInt(limit, 10) : null,
+        force: force,
+        retry_failed: retry
+      });
     }
 
     function startGenresTask() {

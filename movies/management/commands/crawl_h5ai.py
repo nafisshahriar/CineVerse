@@ -19,6 +19,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('--url', required=True, help='Root H5AI URL to crawl')
+        parser.add_argument('--source', default='', help='Custom source server name or label for imported movies')
         parser.add_argument('--force', action='store_true', help='Force re-fetch metadata even for unchanged directories')
         parser.add_argument('--retry-failed', action='store_true', help='Retry previously failed parses')
         parser.add_argument('--max-items', type=int, default=None, help='Maximum items to scan (default: unlimited)')
@@ -27,6 +28,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         root = options['url']
+        custom_source = (options.get('source') or '').strip()
         force = options['force']
         retry_failed = options['retry_failed']
         max_items = options['max_items']
@@ -48,10 +50,11 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.MIGRATE_HEADING(f"Starting crawl at {root}"))
         limit_str = str(max_items) if max_items else 'unlimited'
-        self.stdout.write(f"Options: force={force}, retry_failed={retry_failed}, max_items={limit_str}")
+        src_str = custom_source or 'Auto-detect'
+        self.stdout.write(f"Options: source={src_str}, force={force}, retry_failed={retry_failed}, max_items={limit_str}")
 
         if retry_failed:
-            self._retry_failed_parses(stats, force, timeout)
+            self._retry_failed_parses(stats, force, timeout, custom_source)
 
         last_progress_report = 0
 
@@ -61,10 +64,19 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.WARNING("\n[STOPPED] Crawl halted by user."))
                     break
 
+                if item.get('error'):
+                    self.stdout.write(self.style.ERROR(f"\n[ERROR] {item['message']}"))
+                    stats['failed_error'] += 1
+                    break
+
+                if item.get('warning'):
+                    self.stdout.write(self.style.WARNING(f"\n[WARNING] {item['message']}"))
+                    continue
+
                 stats['total_scanned'] += 1
 
-                # Progress output every 50 items
-                if stats['total_scanned'] - last_progress_report >= 50:
+                # Progress output every 10 items
+                if stats['total_scanned'] - last_progress_report >= 10:
                     last_progress_report = stats['total_scanned']
                     self.stdout.write(
                         f"  Scanned: {stats['total_scanned']} | New: {stats['new_movies']} | "
@@ -76,13 +88,23 @@ class Command(BaseCommand):
                     continue
 
                 if item['is_dir']:
-                    self._process_directory(item, stats, force, timeout)
+                    self._process_directory(item, stats, force, timeout, custom_source)
                 else:
                     name = item['name'].lower()
                     if any(name.endswith(ext) for ext in MEDIA_EXTS):
-                        self._process_media_file(item, stats, force)
+                        self._process_media_file(item, stats, force, custom_source)
 
-            if stats['total_scanned'] > 0 and stats['new_movies'] == 0 and stats['updated_movies'] == 0:
+            if custom_source:
+                try:
+                    from movies.models import MediaSource
+                    MediaSource.objects.update_or_create(
+                        name=custom_source,
+                        defaults={'url': root, 'last_crawled': timezone.now(), 'is_active': True}
+                    )
+                except Exception:
+                    pass
+
+            if stats['total_scanned'] > 0 and stats['new_movies'] == 0 and stats['updated_movies'] == 0 and stats['failed_error'] == 0:
                 self.stdout.write(self.style.WARNING(
                     "\n[OK] All items already processed - nothing new to fetch!"
                 ))
@@ -133,13 +155,15 @@ class Command(BaseCommand):
     def _remove_from_failed(self, url: str):
         FailedParse.objects.filter(url=url).delete()
 
-    def _process_media_file(self, item: dict, stats: dict, force: bool):
+    def _process_media_file(self, item: dict, stats: dict, force: bool, custom_source: str = ''):
         name = item['name']
         href = item['url']
         raw = item.get('raw', '')
         remote_mod = extract_last_modified_from_text(raw)
+        dir_name = item.get('dir_name', '')
 
-        info = parse_movie_info(dir_name='', file_name=name, file_url=href)
+        info = parse_movie_info(dir_name=dir_name, file_name=name, file_url=href)
+        source_name = custom_source or info['source'] or detect_source(href)
 
         try:
             movie, is_new = Movie.objects.get_or_create(
@@ -149,11 +173,12 @@ class Command(BaseCommand):
                     'clean_title': info['clean_title'],
                     'year': info['year'],
                     'year_str': info['year_str'],
-                    'source': info['source'],
+                    'source': source_name,
                     'resolution': info['resolution'],
                     'quality': info['quality'],
                     'language': info['language'],
                     'group_key': info['group_key'],
+                    'directory_url': item.get('directory_url') or '',
                 }
             )
         except IntegrityError:
@@ -163,14 +188,20 @@ class Command(BaseCommand):
                 return
             is_new = False
 
-        if not is_new and not movie.clean_title:
-            movie.clean_title = info['clean_title']
-            movie.source = info['source']
-            movie.resolution = info['resolution']
-            movie.quality = info['quality']
-            movie.language = info['language']
-            movie.group_key = info['group_key']
-            movie.save()
+        if not is_new:
+            changed_fields = []
+            if not movie.clean_title:
+                movie.clean_title = info['clean_title']
+                movie.resolution = info['resolution']
+                movie.quality = info['quality']
+                movie.language = info['language']
+                movie.group_key = info['group_key']
+                changed_fields.extend(['clean_title', 'resolution', 'quality', 'language', 'group_key'])
+            if custom_source and movie.source != custom_source:
+                movie.source = custom_source
+                changed_fields.append('source')
+            if changed_fields:
+                movie.save()
 
         if movie.next_crawl and movie.next_crawl > timezone.now():
             stats['skipped_scheduled'] += 1
@@ -182,9 +213,9 @@ class Command(BaseCommand):
 
         stats['direct_files'] += 1
         self._fetch_movie_metadata(movie, remote_mod, stats, is_new)
-        self.stdout.write(self.style.SUCCESS(f"Processed file: {movie.display_title}"))
+        self.stdout.write(self.style.SUCCESS(f"Processed file: {movie.display_title} [{movie.source}]"))
 
-    def _process_directory(self, item: dict, stats: dict, force: bool, timeout: int):
+    def _process_directory(self, item: dict, stats: dict, force: bool, timeout: int, custom_source: str = ''):
         name = item['name']
         href = item['url']
         raw = item.get('raw', '')
@@ -211,12 +242,11 @@ class Command(BaseCommand):
             return
 
         if not media:
-            stats['failed_no_media'] += 1
-            self._log_failed_parse(name, href, 'no_media', raw)
             return
 
         media_name, media_link, media_raw = media[0]
         info = parse_movie_info(dir_name=name, file_name=media_name, file_url=media_link)
+        source_name = custom_source or info['source'] or detect_source(media_link)
 
         try:
             movie, is_new = Movie.objects.get_or_create(
@@ -226,7 +256,7 @@ class Command(BaseCommand):
                     'clean_title': info['clean_title'],
                     'year': info['year'],
                     'year_str': info['year_str'],
-                    'source': info['source'],
+                    'source': source_name,
                     'resolution': info['resolution'],
                     'quality': info['quality'],
                     'language': info['language'],
@@ -241,14 +271,20 @@ class Command(BaseCommand):
                 return
             is_new = False
 
-        if not is_new and not movie.clean_title:
-            movie.clean_title = info['clean_title']
-            movie.source = info['source']
-            movie.resolution = info['resolution']
-            movie.quality = info['quality']
-            movie.language = info['language']
-            movie.group_key = info['group_key']
-            movie.save()
+        if not is_new:
+            changed_fields = []
+            if not movie.clean_title:
+                movie.clean_title = info['clean_title']
+                movie.resolution = info['resolution']
+                movie.quality = info['quality']
+                movie.language = info['language']
+                movie.group_key = info['group_key']
+                changed_fields.extend(['clean_title', 'resolution', 'quality', 'language', 'group_key'])
+            if custom_source and movie.source != custom_source:
+                movie.source = custom_source
+                changed_fields.append('source')
+            if changed_fields:
+                movie.save()
 
         if movie.next_crawl and movie.next_crawl > timezone.now():
             stats['skipped_scheduled'] += 1
@@ -323,7 +359,7 @@ class Command(BaseCommand):
             movie.save()
             self.stdout.write(self.style.ERROR(f"Error fetching {movie.display_title}: {e}"))
 
-    def _retry_failed_parses(self, stats: dict, force: bool, timeout: int):
+    def _retry_failed_parses(self, stats: dict, force: bool, timeout: int, custom_source: str = ''):
         failed_entries = FailedParse.objects.filter(retry_count__gt=0).order_by('retry_count')
         if not failed_entries.exists():
             return
@@ -335,7 +371,7 @@ class Command(BaseCommand):
                 'is_dir': True,
                 'raw': entry.raw_text,
             }
-            self._process_directory(item, stats, force, timeout)
+            self._process_directory(item, stats, force, timeout, custom_source)
             if FailedParse.objects.filter(url=entry.url).exists():
                 FailedParse.objects.filter(url=entry.url).update(
                     retry_count=max(0, entry.retry_count - 1)

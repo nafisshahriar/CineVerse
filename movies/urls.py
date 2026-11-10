@@ -15,6 +15,10 @@ urlpatterns = [
     path('manage/api/movies/batch_action/', views.manage_batch_action_api, name='manage_batch_action_api'),
     path('manage/api/database/export/', views.manage_database_export, name='manage_database_export'),
     path('manage/api/database/import/', views.manage_database_import, name='manage_database_import'),
+    path('manage/api/sources/', views.manage_sources_api, name='manage_sources_api'),
+    path('manage/api/sources/save/', views.manage_source_save_api, name='manage_source_save_api'),
+    path('manage/api/sources/delete/', views.manage_source_delete_api, name='manage_source_delete_api'),
+    path('manage/api/sources/test/', views.manage_source_test_api, name='manage_source_test_api'),
     path('manage/api/movie/<int:movie_id>/action/', views.manage_movie_action_api, name='manage_movie_action_api'),
 ]
 

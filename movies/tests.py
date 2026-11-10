@@ -2,8 +2,8 @@ import json
 from django.test import TestCase, Client, override_settings
 from django.contrib.auth import get_user_model
 from django.urls import reverse
-from movies.models import Movie, MovieDetail
-from movies.utils import clean_movie_title, detect_resolution, parse_movie_info, detect_language, fetch_imdb_rating_and_id, normalize_imdb_id, fetch_cinemeta_details
+from movies.models import Movie, MovieDetail, MediaSource
+from movies.utils import clean_movie_title, detect_resolution, parse_movie_info, detect_language, fetch_imdb_rating_and_id, normalize_imdb_id, fetch_cinemeta_details, normalize_crawl_url, is_directory_link, test_source_connection
 from movies.task_runner import task_manager, is_task_stopped
 
 User = get_user_model()
@@ -592,3 +592,88 @@ class ManagementSecurityTests(TestCase):
         )
         self.assertEqual(resp_d.status_code, 200)
         self.assertFalse(Movie.objects.filter(id__in=[m1.id, m2.id]).exists())
+
+    def test_normalize_crawl_url(self):
+        # Adds http:// if missing
+        self.assertEqual(normalize_crawl_url("192.168.1.100:8080/movies"), "http://192.168.1.100:8080/movies/")
+        # Appends trailing slash to directory paths
+        self.assertEqual(normalize_crawl_url("http://example.com/media"), "http://example.com/media/")
+        # Preserves files with extensions
+        self.assertEqual(normalize_crawl_url("http://example.com/media/film.mp4"), "http://example.com/media/film.mp4")
+
+    def test_is_directory_link(self):
+        self.assertTrue(is_directory_link("http://example.com/movies/Action/"))
+        self.assertTrue(is_directory_link("http://example.com/movies/Action"))
+        self.assertFalse(is_directory_link("http://example.com/movies/Inception.mkv"))
+        self.assertFalse(is_directory_link("http://example.com/movies/subtitle.srt"))
+
+    def test_source_management_apis(self):
+        self.client.login(username='admin_user', password='Password123!')
+
+        # 1. Save new custom source
+        resp_save = self.client.post(
+            reverse('manage_source_save_api'),
+            data=json.dumps({'name': 'Home NAS', 'url': 'http://192.168.1.50:8080/movies'}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp_save.status_code, 200)
+        data = json.loads(resp_save.content)
+        self.assertTrue(data['success'])
+        self.assertEqual(data['source']['name'], 'Home NAS')
+        self.assertEqual(data['source']['url'], 'http://192.168.1.50:8080/movies/')
+
+        # 2. List sources
+        resp_list = self.client.get(reverse('manage_sources_api'))
+        self.assertEqual(resp_list.status_code, 200)
+        list_data = json.loads(resp_list.content)
+        self.assertTrue(list_data['success'])
+        names = [s['name'] for s in list_data['sources']]
+        self.assertIn('Home NAS', names)
+
+        # 3. Delete source
+        source_id = data['source']['id']
+        resp_del = self.client.post(
+            reverse('manage_source_delete_api'),
+            data=json.dumps({'id': source_id}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp_del.status_code, 200)
+        self.assertFalse(MediaSource.objects.filter(id=source_id).exists())
+
+    def test_source_test_api(self):
+        self.client.login(username='admin_user', password='Password123!')
+
+        # Empty URL test
+        resp_empty = self.client.post(
+            reverse('manage_source_test_api'),
+            data=json.dumps({'url': ''}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp_empty.status_code, 400)
+
+        # Unreachable local URL test (should return structured error without 500 crash)
+        resp_unreach = self.client.post(
+            reverse('manage_source_test_api'),
+            data=json.dumps({'url': 'http://127.0.0.1:54321/nonexistent/'}),
+            content_type='application/json'
+        )
+        self.assertEqual(resp_unreach.status_code, 200)
+        data = json.loads(resp_unreach.content)
+        self.assertFalse(data['success'])
+        self.assertIn('message', data)
+
+    def test_dynamic_sources_in_movie_list(self):
+        # Create movie with custom source
+        Movie.objects.create(
+            title="Custom Source Movie",
+            clean_title="Custom Source Movie",
+            year=2024,
+            source="Seedbox Alpha",
+            file_url="http://seedbox.local/movie.mkv",
+            is_primary_copy=True
+        )
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('source_options', resp.context)
+        self.assertIn('Seedbox Alpha', resp.context['source_options'])
+
