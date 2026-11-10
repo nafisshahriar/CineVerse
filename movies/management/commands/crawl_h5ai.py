@@ -1,11 +1,11 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import IntegrityError
 from django.utils import timezone
 from movies.models import Movie, CrawledDirectory, FailedParse
 from movies.task_runner import is_task_stopped
 from movies.utils import (
     crawl_h5ai_recursive, parse_movie_info, extract_last_modified_from_text,
-    find_media_in_directory, MEDIA_EXTS, IGNORED_DIRS, detect_language
+    find_media_in_directory, MEDIA_EXTS, IGNORED_DIRS, detect_language, detect_source
 )
 from movies.services import fetch_poster_and_details
 from datetime import timedelta
@@ -56,10 +56,12 @@ class Command(BaseCommand):
         if retry_failed:
             self._retry_failed_parses(stats, force, timeout, custom_source)
 
-        last_progress_report = 0
+        def skip_check(href, raw):
+            remote_mod = extract_last_modified_from_text(raw)
+            return self._should_skip_directory(href, remote_mod, force)
 
         try:
-            for item in crawl_h5ai_recursive(root, per_request_timeout=timeout, max_items=max_items):
+            for item in crawl_h5ai_recursive(root, per_request_timeout=timeout, max_items=max_items, should_skip_dir=skip_check):
                 if is_task_stopped():
                     self.stdout.write(self.style.WARNING("\n[STOPPED] Crawl halted by user."))
                     break
@@ -67,30 +69,45 @@ class Command(BaseCommand):
                 if item.get('error'):
                     self.stdout.write(self.style.ERROR(f"\n[ERROR] {item['message']}"))
                     stats['failed_error'] += 1
-                    break
+                    raise CommandError(item['message'])
 
                 if item.get('warning'):
                     self.stdout.write(self.style.WARNING(f"\n[WARNING] {item['message']}"))
                     continue
 
                 stats['total_scanned'] += 1
+                item_name = item.get('name', '').strip()
 
-                # Progress output every 10 items
-                if stats['total_scanned'] - last_progress_report >= 10:
-                    last_progress_report = stats['total_scanned']
+                # Report real-time progress for background task manager
+                if max_items:
+                    pct = min(100.0, (stats['total_scanned'] / max_items) * 100)
                     self.stdout.write(
-                        f"  Scanned: {stats['total_scanned']} | New: {stats['new_movies']} | "
-                        f"Updated: {stats['updated_movies']} | Skipped: {stats['skipped_unchanged']}"
+                        f"[{stats['total_scanned']}/{max_items}] ({pct:5.1f}%) | "
+                        f"Scanned: {stats['total_scanned']} | New: {stats['new_movies']} | "
+                        f"Skipped: {stats['skipped_unchanged']} | Checking: {item_name}"
+                    )
+                else:
+                    self.stdout.write(
+                        f"[CRAWL {stats['total_scanned']}] Scanned: {stats['total_scanned']} | "
+                        f"New: {stats['new_movies']} | Skipped: {stats['skipped_unchanged']} | "
+                        f"Checking: {item_name}"
                     )
 
-                clean_name = item['name'].strip(' /\\').lower()
+                clean_name = item_name.strip(' /\\').lower()
                 if clean_name in IGNORED_DIRS:
                     continue
 
+                if item.get('is_skipped'):
+                    stats['skipped_unchanged'] += 1
+                    self.stdout.write(self.style.NOTICE(f"  [SKIPPED] {item_name} (already scanned & unchanged)"))
+                    continue
+
                 if item['is_dir']:
-                    self._process_directory(item, stats, force, timeout, custom_source)
+                    raw = item.get('raw', '')
+                    remote_mod = extract_last_modified_from_text(raw)
+                    self._update_directory_cache(item['url'], remote_mod, 0)
                 else:
-                    name = item['name'].lower()
+                    name = item_name.lower()
                     if any(name.endswith(ext) for ext in MEDIA_EXTS):
                         self._process_media_file(item, stats, force, custom_source)
 
@@ -105,15 +122,18 @@ class Command(BaseCommand):
                     pass
 
             if stats['total_scanned'] > 0 and stats['new_movies'] == 0 and stats['updated_movies'] == 0 and stats['failed_error'] == 0:
-                self.stdout.write(self.style.WARNING(
-                    "\n[OK] All items already processed - nothing new to fetch!"
+                self.stdout.write(self.style.SUCCESS(
+                    f"\n[OK] All {stats['total_scanned']} items checked - catalog is completely up to date!"
                 ))
 
+        except CommandError:
+            raise
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"Crawler failed: {e}"))
             import traceback
             if self.verbose:
                 self.stdout.write(traceback.format_exc())
+            raise CommandError(str(e))
 
         self._print_summary(stats)
 
@@ -124,6 +144,11 @@ class Command(BaseCommand):
             cached = CrawledDirectory.objects.get(url=dir_url)
             if remote_mod and cached.remote_modified:
                 if remote_mod <= cached.remote_modified:
+                    return True
+            # If server does not report timestamps, but directory was already crawled
+            # within last 24 hours and has known movies, skip re-scanning unless --force is set
+            if not remote_mod and cached.movie_count > 0 and cached.last_crawled:
+                if (timezone.now() - cached.last_crawled) < timedelta(hours=24):
                     return True
         except CrawledDirectory.DoesNotExist:
             pass
@@ -209,10 +234,15 @@ class Command(BaseCommand):
 
         if not force and movie.fetched and not is_new:
             stats['skipped_unchanged'] += 1
+            if item.get('directory_url'):
+                self._update_directory_cache(item['directory_url'], remote_mod, 1)
+            self.stdout.write(self.style.NOTICE(f"  [SKIPPED] {movie.display_title} (unchanged)"))
             return
 
         stats['direct_files'] += 1
         self._fetch_movie_metadata(movie, remote_mod, stats, is_new)
+        if item.get('directory_url'):
+            self._update_directory_cache(item['directory_url'], remote_mod, 1)
         self.stdout.write(self.style.SUCCESS(f"Processed file: {movie.display_title} [{movie.source}]"))
 
     def _process_directory(self, item: dict, stats: dict, force: bool, timeout: int, custom_source: str = ''):

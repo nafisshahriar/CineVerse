@@ -3,7 +3,12 @@ from django.test import TestCase, Client, override_settings
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from movies.models import Movie, MovieDetail, MediaSource
-from movies.utils import clean_movie_title, detect_resolution, parse_movie_info, detect_language, fetch_imdb_rating_and_id, normalize_imdb_id, fetch_cinemeta_details, normalize_crawl_url, is_directory_link, test_source_connection
+from movies.utils import (
+    clean_movie_title, detect_resolution, parse_movie_info, detect_language,
+    fetch_imdb_rating_and_id, normalize_imdb_id, fetch_cinemeta_details,
+    normalize_crawl_url, is_directory_link, test_source_connection,
+    is_private_or_local_host, extract_last_modified_from_text
+)
 from movies.task_runner import task_manager, is_task_stopped
 
 User = get_user_model()
@@ -676,4 +681,56 @@ class ManagementSecurityTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn('source_options', resp.context)
         self.assertIn('Seedbox Alpha', resp.context['source_options'])
+
+    def test_is_private_or_local_host(self):
+        # BDIX / LAN / Local private networks
+        self.assertTrue(is_private_or_local_host('172.16.50.14'))
+        self.assertTrue(is_private_or_local_host('192.168.1.100'))
+        self.assertTrue(is_private_or_local_host('10.16.100.244'))
+        self.assertTrue(is_private_or_local_host('127.0.0.1'))
+        self.assertTrue(is_private_or_local_host('localhost'))
+        self.assertTrue(is_private_or_local_host('my-nas.local'))
+        # Public hosts
+        self.assertFalse(is_private_or_local_host('google.com'))
+        self.assertFalse(is_private_or_local_host('8.8.8.8'))
+
+    def test_extract_last_modified_formats(self):
+        # H5AI 13-digit millisecond epoch
+        dt_ms = extract_last_modified_from_text("Inception.mkv 1680000000000 1048576")
+        self.assertIsNotNone(dt_ms)
+        self.assertEqual(dt_ms.year, 2023)
+
+        # H5AI 10-digit second epoch
+        dt_s = extract_last_modified_from_text("Inception.mkv 1680000000 1048576")
+        self.assertIsNotNone(dt_s)
+        self.assertEqual(dt_s.year, 2023)
+
+        # Standard date
+        dt_std = extract_last_modified_from_text("Inception 2024-05-10 14:30:00")
+        self.assertIsNotNone(dt_std)
+        self.assertEqual(dt_std.year, 2024)
+
+        # Plain movie title without timestamp should return None (not misparse release year)
+        dt_none = extract_last_modified_from_text("The Matrix (1999)")
+        self.assertIsNone(dt_none)
+
+    def test_crawl_task_progress_parsing(self):
+        task_manager.task_state['status'] = 'running'
+        task_manager.task_state['progress_total'] = 0
+        task_manager.task_state['progress_current'] = 0
+
+        # Feed dynamic crawl progress line
+        task_manager._parse_progress_from_line(
+            "[CRAWL 35] Scanned: 35 | New: 3 | Skipped: 32 | Checking: Inception (2010)"
+        )
+
+        self.assertEqual(task_manager.task_state['progress_current'], 35)
+        self.assertIn("Inception", task_manager.task_state['current_item'])
+
+    def test_source_test_private_host_diagnostic(self):
+        # Testing a non-listening local private port
+        result = test_source_connection("http://127.0.0.1:54329/test/", timeout=1)
+        self.assertFalse(result['success'])
+        self.assertTrue(result.get('is_private_host', False))
+        self.assertIn("private local/BDIX network address", result['message'])
 

@@ -136,9 +136,46 @@ class BackgroundTaskManager:
             self.task_state['remaining'] = rem
             self.task_state['speed'] = spd
             self.task_state['eta'] = eta.strip()
+            return
 
-        # Item indicator: e.g. "Processing: Inception (2010)" or "[OK] Title"
-        item_match = re.search(r'(?:Processing:|\[OK\]|\[FAIL\])\s*([^\(\n\r]+)', line)
+        # Format C: Crawl dynamic scanner stream:
+        # e.g. [CRAWL 45] Scanned: 45 | New: 2 | Skipped: 43 | Checking: Inception (2010)
+        # or [45/100] ( 45.0%) | Scanned: 45 | New: 2 | Skipped: 43 | Checking: Inception (2010)
+        match_c = re.search(r'(?:\[(?:CRAWL\s*)?(\d+)(?:/(\d+))?\](?:\s*\(\s*([\d\.]+)%\))?\s*\|\s*)?Scanned:\s*(\d+)(?:\s*\|\s*New:\s*(\d+))?(?:\s*\|\s*Updated:\s*(\d+))?(?:\s*\|\s*Skipped:\s*(\d+))?(?:\s*\|\s*Checking:\s*([^\|\n\r]+))?', line)
+        if match_c and (match_c.group(1) or match_c.group(4)):
+            scanned = int(match_c.group(4) or match_c.group(1))
+            tot = int(match_c.group(2)) if match_c.group(2) else None
+            pct = float(match_c.group(3)) if match_c.group(3) else None
+
+            self.task_state['progress_current'] = scanned
+            if tot:
+                self.task_state['progress_total'] = tot
+                self.task_state['progress_percent'] = pct if pct is not None else min(100.0, (scanned / tot) * 100)
+                self.task_state['remaining'] = max(0, tot - scanned)
+            else:
+                if self.task_state['progress_total'] < scanned:
+                    self.task_state['progress_total'] = scanned
+                self.task_state['progress_percent'] = 0.0
+
+            checking = match_c.group(8)
+            if checking:
+                self.task_state['current_item'] = checking.strip()
+
+            if self.task_state.get('started_at'):
+                try:
+                    start_dt = datetime.strptime(self.task_state['started_at'], '%Y-%m-%d %H:%M:%S')
+                    elapsed = max(0.5, (datetime.now() - start_dt).total_seconds())
+                    spd = scanned / elapsed
+                    self.task_state['speed'] = f"{spd:.1f} it/s"
+                    if tot and spd > 0:
+                        rem_sec = int((tot - scanned) / spd)
+                        self.task_state['eta'] = f"{rem_sec // 60}m {rem_sec % 60:02d}s"
+                except Exception:
+                    pass
+            return
+
+        # Item indicator: e.g. "Processing: Inception (2010)" or "[OK] Title" or "[SKIPPED] Title"
+        item_match = re.search(r'(?:Processing:|\[OK\]|\[FAIL\]|\[SKIPPED\]|\[SKIP\]|Processed:)\s*([^\(\n\r]+)', line)
         if item_match:
             self.task_state['current_item'] = item_match.group(1).strip()
 
@@ -222,8 +259,10 @@ class BackgroundTaskManager:
                 elif self.task_state['status'] in ('running', 'stopping'):
                     self.task_state['status'] = 'completed'
                     self.task_state['progress_percent'] = 100.0
+                    self.task_state['progress_total'] = max(self.task_state['progress_total'], self.task_state['progress_current'])
                     self.task_state['remaining'] = 0
                     self.task_state['eta'] = '0s'
+                    self.task_state['current_item'] = 'Complete - All items up to date'
                     self.task_state['finished_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     self.append_log("[SUCCESS] Task completed successfully!")
         except Exception as e:

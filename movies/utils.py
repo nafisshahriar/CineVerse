@@ -1,6 +1,7 @@
 import re
 import os
 import time
+import ipaddress
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, unquote, urlunparse
@@ -394,8 +395,14 @@ def list_h5ai_directory(url: str, timeout: int = 10, session: requests.Session =
 
 
 def extract_last_modified_from_text(raw_line: str):
+    """
+    Extract last modified datetime from raw line or metadata string.
+    Supports standard YYYY-MM-DD, Apache/Nginx AutoIndex date formats,
+    and H5AI Unix epoch millisecond/second timestamps.
+    """
     if not raw_line:
         return None
+    # 1. Full datetime: 2024-05-10 14:30:00
     m = re.search(r'(20\d{2}-\d{2}-\d{2}\s*\d{2}:\d{2}:\d{2})', raw_line)
     if m:
         try:
@@ -403,6 +410,7 @@ def extract_last_modified_from_text(raw_line: str):
             return dt.replace(tzinfo=dt_timezone.utc)
         except Exception:
             pass
+    # 2. Date with dashes: 2024-05-10
     m = re.search(r'(20\d{2}-\d{2}-\d{2})', raw_line)
     if m:
         try:
@@ -410,24 +418,50 @@ def extract_last_modified_from_text(raw_line: str):
             return dt.replace(tzinfo=dt_timezone.utc)
         except Exception:
             pass
-    m2 = re.search(r'(\d{1,2}-[A-Za-z]{3}-20\d{2})', raw_line)
+    # 3. Apache/Nginx AutoIndex format: 12-Jan-2024 or 12-Jan-2024 14:20
+    m2 = re.search(r'(\d{1,2}-[A-Za-z]{3}-20\d{2}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)', raw_line)
     if m2:
+        val = m2.group(1).strip()
+        for fmt in ('%d-%b-%Y %H:%M:%S', '%d-%b-%Y %H:%M', '%d-%b-%Y'):
+            try:
+                dt = datetime.strptime(val, fmt)
+                return dt.replace(tzinfo=dt_timezone.utc)
+            except Exception:
+                pass
+    # 4. Unix epoch timestamps (seconds: 10 digits, milliseconds: 13 digits) - used by H5AI JSON API
+    m_epoch = re.search(r'\b(1[5-7]\d{8}(?:\d{3})?)\b', raw_line)
+    if m_epoch:
         try:
-            dt = datetime.strptime(m2.group(1), '%d-%b-%Y')
-            return dt.replace(tzinfo=dt_timezone.utc)
+            val = int(m_epoch.group(1))
+            if val > 100000000000:  # milliseconds
+                val = val / 1000.0
+            return datetime.fromtimestamp(val, tz=dt_timezone.utc)
         except Exception:
             pass
-    m3 = re.search(r'(20\d{2})', raw_line)
-    if m3:
-        yr = int(m3.group(1))
-        return datetime(yr, 1, 1, tzinfo=dt_timezone.utc)
     return None
 
 
-def crawl_h5ai_recursive(root_url: str, per_request_timeout: int = 8, max_items: int = None):
+def is_private_or_local_host(hostname: str) -> bool:
+    """Check if hostname/IP points to a private local or BDIX network."""
+    if not hostname:
+        return False
+    host_clean = hostname.split(':')[0].strip().lower()
+    if host_clean in ('localhost', '127.0.0.1', '::1') or host_clean.endswith('.local'):
+        return True
+    try:
+        ip = ipaddress.ip_address(host_clean)
+        return ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local
+    except ValueError:
+        pass
+    return False
+
+
+def crawl_h5ai_recursive(root_url: str, per_request_timeout: int = 8, max_items: int = None, should_skip_dir=None):
     """
     Recursively explore directory trees and media files from root_url.
     Yields dictionary for each discovered media file or directory.
+    If should_skip_dir is provided and returns True for a directory, recursing into
+    that unchanged directory is skipped, saving network round trips.
     Yields error item if root_url cannot be reached so callers get immediate feedback.
     """
     root_url = normalize_crawl_url(root_url)
@@ -474,11 +508,26 @@ def crawl_h5ai_recursive(root_url: str, per_request_timeout: int = 8, max_items:
             if clean_name in IGNORED_DIRS:
                 continue
 
+            # If directory is already crawled and unchanged, skip recursing into it
+            if is_dir and should_skip_dir and should_skip_dir(href, raw):
+                yielded += 1
+                yield {
+                    'name': text,
+                    'url': href,
+                    'is_dir': True,
+                    'is_skipped': True,
+                    'raw': raw,
+                    'dir_name': cur_dir_name,
+                    'directory_url': cur,
+                }
+                continue
+
             yielded += 1
             yield {
                 'name': text,
                 'url': href,
                 'is_dir': is_dir,
+                'is_skipped': False,
                 'raw': raw,
                 'dir_name': cur_dir_name,
                 'directory_url': cur,
@@ -523,8 +572,32 @@ def test_source_connection(url: str, timeout: int = 8) -> dict:
         except Exception as e:
             return {'success': False, 'message': f"SSL certificate verification failed: {e}"}
     except requests.exceptions.Timeout:
+        hostname = urlparse(norm_url).hostname or ''
+        if is_private_or_local_host(hostname):
+            return {
+                'success': False,
+                'is_private_host': True,
+                'message': (
+                    f"Connection timed out reaching '{hostname}'. This is a private local/BDIX network address. "
+                    "Cloud hosts (like Render) cannot route to private LAN or local ISP subnets directly over the internet. "
+                    "To use this source: (1) Run CineVerse locally or on a Raspberry Pi on the same network, "
+                    "(2) Use CineVerse's Database Backup & Restore to sync local movies to Render, or "
+                    "(3) Expose your local FTP using Cloudflare Tunnel, Tailscale, or Ngrok."
+                )
+            }
         return {'success': False, 'message': f"Connection timed out after {timeout}s. Verify server IP and network access."}
     except requests.exceptions.ConnectionError:
+        hostname = urlparse(norm_url).hostname or ''
+        if is_private_or_local_host(hostname):
+            return {
+                'success': False,
+                'is_private_host': True,
+                'message': (
+                    f"Connection refused by '{hostname}'. This is a private local/BDIX network address. "
+                    "Cloud servers (like Render) cannot reach local intranet or BDIX IPs directly over the internet. "
+                    "Run CineVerse locally or on a Raspberry Pi on that network to scan this source, or transfer metadata using Database Backup & Restore."
+                )
+            }
         return {'success': False, 'message': "Connection refused. Server may be offline, firewalled, or on an unreachable subnet."}
     except requests.exceptions.HTTPError as e:
         status = resp.status_code if 'resp' in locals() else None

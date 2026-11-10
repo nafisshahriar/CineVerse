@@ -1764,6 +1764,11 @@
               '<strong>Preview items:</strong> ' + res.sample_items.map(escapeHtml).join(', ') + '</div>';
           }
           resBox.innerHTML = '🟢 <strong>Connected!</strong> ' + escapeHtml(res.message) + samplesHtml;
+        } else if (res.is_private_host) {
+          resBox.style.background = 'rgba(245, 158, 11, 0.18)';
+          resBox.style.border = '1px solid rgba(245, 158, 11, 0.5)';
+          resBox.style.color = '#fcd34d';
+          resBox.innerHTML = '⚠️ <strong>Cloud Network Boundary:</strong> ' + escapeHtml(res.message);
         } else {
           resBox.style.background = 'rgba(239, 68, 68, 0.15)';
           resBox.style.border = '1px solid rgba(239, 68, 68, 0.4)';
@@ -1898,7 +1903,19 @@
 
           if (isTaskActive) {
             pill.classList.add('running');
-            pillText.textContent = `Running: ${data.task_name} (${data.progress_percent.toFixed(0)}%)`;
+            const hasPct = data.progress_total > 0 && data.progress_percent > 0;
+            if (hasPct) {
+              pillText.textContent = `Running: ${data.task_name} (${data.progress_percent.toFixed(0)}%)`;
+              document.getElementById('consolePercent').textContent = `${data.progress_percent.toFixed(1)}%`;
+              document.getElementById('consoleItems').textContent = `${data.progress_current}/${data.progress_total}`;
+              document.getElementById('consoleProgressBar').style.width = `${data.progress_percent}%`;
+            } else {
+              const scannedText = data.progress_current > 0 ? `${data.progress_current} scanned` : 'Starting...';
+              pillText.textContent = `Running: ${data.task_name} (${scannedText})`;
+              document.getElementById('consolePercent').textContent = data.progress_current > 0 ? `${data.progress_current} scanned` : 'Scanning...';
+              document.getElementById('consoleItems').textContent = `${data.progress_current} items`;
+              document.getElementById('consoleProgressBar').style.width = '100%';
+            }
             badge.style.display = 'inline-block';
             stopBtn.style.display = 'inline-flex';
             progressArea.style.display = 'block';
@@ -1908,9 +1925,6 @@
             consoleName.textContent = data.task_name;
             consoleMeta.textContent = `Started at: ${data.started_at || 'just now'}`;
 
-            document.getElementById('consolePercent').textContent = `${data.progress_percent.toFixed(1)}%`;
-            document.getElementById('consoleItems').textContent = `${data.progress_current}/${data.progress_total}`;
-            document.getElementById('consoleProgressBar').style.width = `${data.progress_percent}%`;
             document.getElementById('consoleSpeedEta').textContent = `Speed: ${data.speed || '—'} • ETA: ${data.eta || 'calculating...'}`;
             document.getElementById('consoleCurrentItem').textContent = data.current_item || '';
           } else {
@@ -1927,6 +1941,8 @@
               progressArea.style.display = 'block';
               document.getElementById('consoleProgressBar').style.width = '100%';
               document.getElementById('consolePercent').textContent = '100%';
+              document.getElementById('consoleItems').textContent = data.progress_total > 0 ? `${data.progress_current}/${data.progress_total}` : `${data.progress_current} items`;
+              document.getElementById('consoleCurrentItem').textContent = data.current_item || 'All items up to date';
             } else if (data.status === 'failed') {
               pillText.textContent = 'Last Task: Failed';
               consoleName.textContent = `${data.task_name} (Failed)`;
