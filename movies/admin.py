@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.db.models import F
-from .models import Movie, CrawledDirectory, FailedParse, MovieDetail
+from .models import Movie, CrawledDirectory, FailedParse, MovieDetail, MediaSource
 
 
 @admin.register(Movie)
@@ -46,4 +46,13 @@ class MovieDetailAdmin(admin.ModelAdmin):
     search_fields = ('movie__title', 'tmdb_id')
     readonly_fields = ('fetched_at',)
     list_filter = ('original_language',)
+
+
+@admin.register(MediaSource)
+class MediaSourceAdmin(admin.ModelAdmin):
+    list_display = ('name', 'url', 'source_type', 'is_active', 'last_crawled')
+    search_fields = ('name', 'url')
+    list_filter = ('source_type', 'is_active')
+    readonly_fields = ('created_at', 'last_crawled')
+
 

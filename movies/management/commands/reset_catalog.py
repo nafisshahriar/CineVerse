@@ -68,15 +68,16 @@ class Command(BaseCommand):
             MovieDetail.objects.all().delete()
             Movie.objects.all().delete()
 
-            # Reset auto-increment counters on SQLite
-            try:
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "DELETE FROM sqlite_sequence WHERE name IN "
-                        "('movies_movie', 'movies_moviedetail', 'movies_crawleddirectory', 'movies_failedparse')"
-                    )
-            except Exception:
-                pass
+            # Reset auto-increment counters strictly on SQLite
+            if connection.vendor == 'sqlite':
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "DELETE FROM sqlite_sequence WHERE name IN "
+                            "('movies_movie', 'movies_moviedetail', 'movies_crawleddirectory', 'movies_failedparse')"
+                        )
+                except Exception:
+                    pass
 
         self.stdout.write(self.style.SUCCESS(
             "✓ Catalog successfully reset! The database is now clean and empty."

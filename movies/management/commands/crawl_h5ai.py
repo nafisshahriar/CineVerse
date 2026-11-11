@@ -158,7 +158,7 @@ class Command(BaseCommand):
 
     def _update_directory_cache(self, dir_url: str, remote_mod, movie_count: int):
         CrawledDirectory.objects.update_or_create(
-            url=dir_url,
+            url=(dir_url or '')[:1000],
             defaults={
                 'remote_modified': remote_mod,
                 'movie_count': movie_count,
@@ -170,17 +170,74 @@ class Command(BaseCommand):
         if clean in IGNORED_DIRS:
             return
         FailedParse.objects.update_or_create(
-            url=url,
+            url=(url or '')[:1000],
             defaults={
-                'name': name,
-                'reason': reason,
+                'name': (name or '')[:512],
+                'reason': (reason or '')[:32],
                 'raw_text': raw[:1000] if raw else '',
                 'error_message': error[:500] if error else '',
             }
         )
 
     def _remove_from_failed(self, url: str):
-        FailedParse.objects.filter(url=url).delete()
+        FailedParse.objects.filter(url=(url or '')[:1000]).delete()
+
+    def _get_or_create_movie(
+        self, file_url: str, directory_url: str, info: dict,
+        source_name: str, custom_source: str, stats: dict
+    ):
+        """Create or fetch a Movie row with field lengths clamped for PostgreSQL compatibility."""
+        safe_url = (file_url or '')[:1000]
+        safe_dir = (directory_url or '')[:1000]
+        safe_title = (info.get('title') or '')[:512]
+        safe_clean_title = (info.get('clean_title') or '')[:512]
+        safe_source = (source_name or '')[:64]
+        safe_resolution = (info.get('resolution') or '')[:20]
+        safe_quality = (info.get('quality') or '')[:32]
+        safe_language = (info.get('language') or '')[:40]
+        safe_group_key = (info.get('group_key') or '')[:512]
+        safe_year_str = (info.get('year_str') or '')[:10]
+        safe_custom_source = (custom_source or '')[:64]
+
+        try:
+            movie, is_new = Movie.objects.get_or_create(
+                file_url=safe_url,
+                defaults={
+                    'title': safe_title,
+                    'clean_title': safe_clean_title,
+                    'year': info.get('year'),
+                    'year_str': safe_year_str,
+                    'source': safe_source,
+                    'resolution': safe_resolution,
+                    'quality': safe_quality,
+                    'language': safe_language,
+                    'group_key': safe_group_key,
+                    'directory_url': safe_dir,
+                }
+            )
+        except IntegrityError:
+            movie = Movie.objects.filter(file_url=safe_url).first()
+            if not movie:
+                stats['failed_error'] += 1
+                return None, False
+            is_new = False
+
+        if not is_new:
+            changed_fields = []
+            if not movie.clean_title:
+                movie.clean_title = safe_clean_title
+                movie.resolution = safe_resolution
+                movie.quality = safe_quality
+                movie.language = safe_language
+                movie.group_key = safe_group_key
+                changed_fields.extend(['clean_title', 'resolution', 'quality', 'language', 'group_key'])
+            if safe_custom_source and movie.source != safe_custom_source:
+                movie.source = safe_custom_source
+                changed_fields.append('source')
+            if changed_fields:
+                movie.save()
+
+        return movie, is_new
 
     def _process_media_file(self, item: dict, stats: dict, force: bool, custom_source: str = ''):
         name = item['name']
@@ -192,43 +249,16 @@ class Command(BaseCommand):
         info = parse_movie_info(dir_name=dir_name, file_name=name, file_url=href)
         source_name = custom_source or info['source'] or detect_source(href)
 
-        try:
-            movie, is_new = Movie.objects.get_or_create(
-                file_url=href,
-                defaults={
-                    'title': info['title'],
-                    'clean_title': info['clean_title'],
-                    'year': info['year'],
-                    'year_str': info['year_str'],
-                    'source': source_name,
-                    'resolution': info['resolution'],
-                    'quality': info['quality'],
-                    'language': info['language'],
-                    'group_key': info['group_key'],
-                    'directory_url': item.get('directory_url') or '',
-                }
-            )
-        except IntegrityError:
-            movie = Movie.objects.filter(file_url=href).first()
-            if not movie:
-                stats['failed_error'] += 1
-                return
-            is_new = False
-
-        if not is_new:
-            changed_fields = []
-            if not movie.clean_title:
-                movie.clean_title = info['clean_title']
-                movie.resolution = info['resolution']
-                movie.quality = info['quality']
-                movie.language = info['language']
-                movie.group_key = info['group_key']
-                changed_fields.extend(['clean_title', 'resolution', 'quality', 'language', 'group_key'])
-            if custom_source and movie.source != custom_source:
-                movie.source = custom_source
-                changed_fields.append('source')
-            if changed_fields:
-                movie.save()
+        movie, is_new = self._get_or_create_movie(
+            file_url=href,
+            directory_url=item.get('directory_url') or '',
+            info=info,
+            source_name=source_name,
+            custom_source=custom_source,
+            stats=stats,
+        )
+        if not movie:
+            return
 
         if movie.next_crawl and movie.next_crawl > timezone.now():
             stats['skipped_scheduled'] += 1
@@ -280,43 +310,16 @@ class Command(BaseCommand):
         info = parse_movie_info(dir_name=name, file_name=media_name, file_url=media_link)
         source_name = custom_source or info['source'] or detect_source(media_link)
 
-        try:
-            movie, is_new = Movie.objects.get_or_create(
-                file_url=media_link,
-                defaults={
-                    'title': info['title'],
-                    'clean_title': info['clean_title'],
-                    'year': info['year'],
-                    'year_str': info['year_str'],
-                    'source': source_name,
-                    'resolution': info['resolution'],
-                    'quality': info['quality'],
-                    'language': info['language'],
-                    'group_key': info['group_key'],
-                    'directory_url': href,
-                }
-            )
-        except IntegrityError:
-            movie = Movie.objects.filter(file_url=media_link).first()
-            if not movie:
-                stats['failed_error'] += 1
-                return
-            is_new = False
-
-        if not is_new:
-            changed_fields = []
-            if not movie.clean_title:
-                movie.clean_title = info['clean_title']
-                movie.resolution = info['resolution']
-                movie.quality = info['quality']
-                movie.language = info['language']
-                movie.group_key = info['group_key']
-                changed_fields.extend(['clean_title', 'resolution', 'quality', 'language', 'group_key'])
-            if custom_source and movie.source != custom_source:
-                movie.source = custom_source
-                changed_fields.append('source')
-            if changed_fields:
-                movie.save()
+        movie, is_new = self._get_or_create_movie(
+            file_url=media_link,
+            directory_url=href,
+            info=info,
+            source_name=source_name,
+            custom_source=custom_source,
+            stats=stats,
+        )
+        if not movie:
+            return
 
         if movie.next_crawl and movie.next_crawl > timezone.now():
             stats['skipped_scheduled'] += 1
@@ -339,21 +342,21 @@ class Command(BaseCommand):
             details = fetch_poster_and_details(search_title, movie.year_str or '')
 
             if details:
-                movie.poster_url = details.get('poster_url') or movie.poster_url
+                movie.poster_url = (details.get('poster_url') or movie.poster_url or '')[:512]
                 movie.popularity = details.get('popularity') or movie.popularity
                 movie.vote_count = details.get('vote_count') or movie.vote_count
                 movie.vote_average = details.get('vote_average') or movie.vote_average
                 if details.get('genres_str'):
-                    movie.genres = details['genres_str']
+                    movie.genres = details['genres_str'][:255]
                 elif details.get('genres'):
-                    movie.genres = ', '.join(details['genres'])
+                    movie.genres = ', '.join(details['genres'])[:255]
                 movie.fetched = True
                 movie.metadata_status = 'ok'
                 movie.last_crawled = timezone.now()
                 movie.remote_modified = remote_mod or movie.remote_modified
                 movie.next_crawl = None
                 if details.get('original_language'):
-                    movie.language = detect_language(tmdb_code=details['original_language'])
+                    movie.language = (detect_language(tmdb_code=details['original_language']) or '')[:40]
                 movie.save()
 
                 stats['metadata_fetched'] += 1

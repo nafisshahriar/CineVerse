@@ -1477,26 +1477,31 @@
           <div class="op-card-header">
             <div class="op-icon" style="background: rgba(59, 130, 246, 0.15); border-color: rgba(59, 130, 246, 0.35);">💾</div>
             <div class="op-title-area">
-              <div style="display:flex; align-items:center; gap:8px;">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <h3>Database Backup &amp; Device Migration</h3>
-                <span class="studio-badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3);">Portability</span>
+                <span class="studio-badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.3);">{{ db_vendor|default:"sqlite"|upper }} Active</span>
               </div>
-              <p>Export your full movie library and metadata as a <code>db.sqlite3</code> file to backup safely or migrate directly to your Raspberry Pi / server in seconds.</p>
+              <p>Export a portable catalog backup (<code>.json.gz</code> — works across SQLite &amp; PostgreSQL without altering Admin login) or raw SQLite file.</p>
             </div>
           </div>
           <div class="op-form" style="display:flex; flex-direction:column; gap:12px;">
             <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-              <a href="/manage/api/database/export/" class="btn-hub-action primary" download style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
-                📥 Download Database Backup (.sqlite3)
+              <a href="/manage/api/database/export/?format=json" class="btn-hub-action primary" download style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                📥 Download Portable Catalog (.json.gz)
               </a>
+              {% if db_vendor == 'sqlite' %}
+              <a href="/manage/api/database/export/" class="btn-return-cinema" download style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                🗄️ Download SQLite (.sqlite3)
+              </a>
+              {% endif %}
             </div>
             <div class="form-row" style="margin-top:8px;">
-              <label for="importDbFile">Restore / Import Database File</label>
+              <label for="importDbFile">Restore / Import Catalog File</label>
               <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <input type="file" id="importDbFile" accept=".sqlite3,.db,.sqlite" class="form-input" style="padding:6px; max-width: 320px;">
+                <input type="file" id="importDbFile" accept=".json,.gz,.json.gz,.sqlite3,.db,.sqlite" class="form-input" style="padding:6px; max-width: 320px;">
                 <button class="btn-return-cinema" type="button" onclick="uploadDatabaseBackup()">📤 Restore File</button>
               </div>
-              <span class="form-hint">Uploading a backup will safely archive your current database and load the uploaded library.</span>
+              <span class="form-hint">Recommended: upload <code>.json.gz</code> to sync movies between SQLite &amp; online PostgreSQL cleanly while preserving admin login.</span>
             </div>
           </div>
         </div>
@@ -2375,10 +2380,10 @@
     function uploadDatabaseBackup() {
       const fileInput = document.getElementById('importDbFile');
       if (!fileInput || !fileInput.files.length) {
-        alert('Please select a .sqlite3 database file to upload.');
+        alert('Please select a .json.gz, .json, or .sqlite3 backup file to upload.');
         return;
       }
-      if (!confirm('Warning: Restoring a database file will overwrite your current catalog data with the uploaded file. Do you wish to continue?')) {
+      if (!confirm('Warning: Restoring a backup will replace your catalog data (admin accounts are preserved for .json/.json.gz backups). Do you wish to continue?')) {
         return;
       }
 
@@ -2392,7 +2397,7 @@
       .then(r => r.json())
       .then(res => {
         if (res.success) {
-          alert('✅ Database imported successfully! Refreshing page...');
+          alert('✅ ' + (res.message || 'Database restored successfully!') + ' Refreshing page...');
           window.location.reload();
         } else {
           alert('Import error: ' + res.message);

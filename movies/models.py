@@ -7,9 +7,9 @@ class Movie(models.Model):
     clean_title = models.CharField(max_length=512, blank=True, default='', db_index=True)
     year = models.IntegerField(null=True, blank=True, db_index=True)
     year_str = models.CharField(max_length=10, blank=True, null=True)  # Original string
-    poster_url = models.URLField(blank=True, null=True)
-    file_url = models.URLField(unique=True)  # Unique constraint on file_url alone
-    directory_url = models.URLField(blank=True, null=True)  # Parent directory
+    poster_url = models.URLField(max_length=512, blank=True, null=True)
+    file_url = models.URLField(max_length=1000, unique=True)  # Unique constraint on file_url alone
+    directory_url = models.URLField(max_length=1000, blank=True, null=True)  # Parent directory
     source = models.CharField(max_length=64, blank=True, default='', db_index=True)  # e.g. "Dhaka-Flix 14", "E-Box"
     resolution = models.CharField(max_length=20, blank=True, default='', db_index=True)  # e.g. "4K", "1080p", "720p"
     quality = models.CharField(max_length=32, blank=True, default='')  # e.g. "BluRay", "WEB-DL"
@@ -76,7 +76,7 @@ class Movie(models.Model):
 
 class CrawledDirectory(models.Model):
     """Track directories and their modification times to skip unchanged ones"""
-    url = models.URLField(unique=True, db_index=True)
+    url = models.URLField(max_length=1000, unique=True, db_index=True)
     remote_modified = models.DateTimeField(null=True, blank=True)
     last_crawled = models.DateTimeField(auto_now=True)
     movie_count = models.IntegerField(default=0)
@@ -99,7 +99,7 @@ class FailedParse(models.Model):
     ]
     
     name = models.CharField(max_length=512)
-    url = models.URLField(unique=True, db_index=True)
+    url = models.URLField(max_length=1000, unique=True, db_index=True)
     reason = models.CharField(max_length=32, choices=REASON_CHOICES, default='unknown')
     raw_text = models.TextField(blank=True)
     error_message = models.TextField(blank=True)
@@ -123,9 +123,9 @@ class MovieDetail(models.Model):
     genres = models.JSONField(default=list)
     runtime = models.IntegerField(null=True, blank=True)  # in minutes
     release_date = models.DateField(null=True, blank=True)
-    backdrop_url = models.URLField(blank=True, null=True)
+    backdrop_url = models.URLField(max_length=512, blank=True, null=True)
     trailer_key = models.CharField(max_length=64, blank=True, default='')  # YouTube video ID
-    trailer_url = models.URLField(blank=True, null=True)
+    trailer_url = models.URLField(max_length=512, blank=True, null=True)
     tagline = models.CharField(max_length=512, blank=True)
     imdb_id = models.CharField(max_length=20, blank=True)
     imdb_rating = models.FloatField(null=True, blank=True)
@@ -144,7 +144,7 @@ class MovieDetail(models.Model):
 class MediaSource(models.Model):
     """Configured media server sources (H5AI, Apache, Nginx, local NAS, Pi)"""
     name = models.CharField(max_length=100, unique=True, db_index=True)
-    url = models.URLField(max_length=512)
+    url = models.URLField(max_length=1000)
     source_type = models.CharField(max_length=50, default='h5ai', blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -688,11 +688,13 @@ def manage_dashboard(request):
     resolutions_breakdown = list(Movie.objects.values('resolution').annotate(count=Count('id')).order_by('-count'))
     status_breakdown = list(Movie.objects.values('metadata_status').annotate(count=Count('id')).order_by('-count'))
 
+    from django.db import connection
     recent_crawls = list(CrawledDirectory.objects.order_by('-last_crawled')[:8])
     failed_count = FailedParse.objects.count()
     configured_sources = get_configured_sources()
 
     context = {
+        'db_vendor': connection.vendor,
         'total_files': total_files,
         'unique_movies': unique_movies,
         'missing_posters': missing_posters,
@@ -1080,14 +1082,39 @@ def manage_batch_action_api(request):
 
 @manage_auth_required
 def manage_database_export(request):
-    """Download local db.sqlite3 directly as a backup file."""
+    """Export database backup: portable gzipped JSON catalog or checkpointed SQLite file."""
     import os
+    import io
+    import gzip
     from django.conf import settings
+    from django.core.management import call_command
+    from django.db import connection
     from django.http import FileResponse, Http404
 
-    db_path = settings.DATABASES['default']['NAME']
+    fmt = request.GET.get('format', '').strip().lower()
+    is_sqlite = (connection.vendor == 'sqlite')
+
+    if fmt == 'json' or not is_sqlite:
+        buf = io.StringIO()
+        call_command('dumpdata', 'movies', stdout=buf)
+        gz_buf = io.BytesIO()
+        with gzip.GzipFile(fileobj=gz_buf, mode='wb') as gz:
+            gz.write(buf.getvalue().encode('utf-8'))
+        gz_buf.seek(0)
+        response = HttpResponse(gz_buf.read(), content_type='application/gzip')
+        response['Content-Disposition'] = 'attachment; filename="cineverse_catalog_backup.json.gz"'
+        return response
+
+    db_path = str(settings.DATABASES['default']['NAME'])
     if not os.path.exists(db_path):
         raise Http404("Database file not found.")
+
+    # Flush SQLite WAL journal into the main db.sqlite3 file before downloading
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    except Exception:
+        pass
 
     response = FileResponse(open(db_path, 'rb'), content_type='application/x-sqlite3')
     response['Content-Disposition'] = 'attachment; filename="cineverse_db_backup.sqlite3"'
@@ -1097,9 +1124,15 @@ def manage_database_export(request):
 @csrf_exempt
 @manage_auth_required
 def manage_database_import(request):
-    """Restore db.sqlite3 from uploaded backup file."""
-    import os, shutil
+    """Restore catalog from .json/.json.gz (PostgreSQL & SQLite) or .sqlite3 (SQLite only)."""
+    import os
+    import shutil
+    import tempfile
     from django.conf import settings
+    from django.core.management import call_command
+    from django.core.management.color import no_style
+    from django.db import connection, connections, transaction
+
     if request.method != 'POST':
         return JsonResponse({'success': False, 'message': 'Method not allowed'}, status=405)
 
@@ -1107,20 +1140,88 @@ def manage_database_import(request):
         return JsonResponse({'success': False, 'message': 'No database file uploaded'}, status=400)
 
     uploaded_file = request.FILES['db_file']
-    if not uploaded_file.name.endswith(('.sqlite3', '.db', '.sqlite')):
-        return JsonResponse({'success': False, 'message': 'Invalid file format. Must be a .sqlite3 file.'}, status=400)
+    fname = uploaded_file.name.lower()
 
-    target_path = settings.DATABASES['default']['NAME']
+    # Path A: Portable Catalog JSON / Gzipped JSON import (Works on PostgreSQL & SQLite without breaking Auth/Admin)
+    if fname.endswith(('.json', '.json.gz')):
+        suffix = '.json.gz' if fname.endswith('.json.gz') else '.json'
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                for chunk in uploaded_file.chunks():
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+
+            with transaction.atomic():
+                FailedParse.objects.all().delete()
+                CrawledDirectory.objects.all().delete()
+                MovieDetail.objects.all().delete()
+                Movie.objects.all().delete()
+                MediaSource.objects.all().delete()
+                call_command('loaddata', tmp_path)
+
+            # Reset PostgreSQL sequences after explicit PK fixture load
+            if connection.vendor == 'postgresql':
+                sequence_sql = connection.ops.sequence_reset_sql(
+                    no_style(), [Movie, MovieDetail, CrawledDirectory, FailedParse, MediaSource]
+                )
+                with connection.cursor() as cursor:
+                    for sql in sequence_sql:
+                        cursor.execute(sql)
+
+            return JsonResponse({
+                'success': True,
+                'message': f'Catalog restored successfully! ({Movie.objects.count()} movies loaded). Admin access preserved.'
+            })
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': f"JSON catalog import failed: {str(e)}"}, status=500)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+
+    # Path B: SQLite Binary File Restore (SQLite environments only)
+    if not fname.endswith(('.sqlite3', '.db', '.sqlite')):
+        return JsonResponse({'success': False, 'message': 'Invalid file format. Use .json.gz, .json, or .sqlite3.'}, status=400)
+
+    if connection.vendor != 'sqlite':
+        return JsonResponse({
+            'success': False,
+            'message': 'This server uses Online PostgreSQL. Binary .sqlite3 files cannot overwrite PostgreSQL — please upload a .json.gz Catalog Export or run "python manage.py push_local_to_online" from your PC.'
+        }, status=400)
+
+    target_path = str(settings.DATABASES['default']['NAME'])
     backup_path = f"{target_path}.bak"
 
     try:
+        header = uploaded_file.read(16)
+        uploaded_file.seek(0)
+        if not header.startswith(b'SQLite format 3\x00'):
+            return JsonResponse({'success': False, 'message': 'Invalid SQLite database file header.'}, status=400)
+
+        # Close active DB connections and remove WAL/SHM sidecar files before replacing db.sqlite3
+        connections.close_all()
         if os.path.exists(target_path):
             shutil.copy2(target_path, backup_path)
+        for sidecar in (f"{target_path}-wal", f"{target_path}-shm"):
+            if os.path.exists(sidecar):
+                try:
+                    os.remove(sidecar)
+                except Exception:
+                    pass
+
         with open(target_path, 'wb+') as destination:
             for chunk in uploaded_file.chunks():
                 destination.write(chunk)
-        return JsonResponse({'success': True, 'message': 'Database imported successfully!'})
+
+        # Re-run migrations and ensure admin account credentials remain active
+        call_command('migrate', '--noinput')
+        call_command('ensure_admin')
+        return JsonResponse({'success': True, 'message': 'SQLite database restored and admin verified!'})
     except Exception as e:
+        connections.close_all()
         if os.path.exists(backup_path):
             shutil.copy2(backup_path, target_path)
         return JsonResponse({'success': False, 'message': f"Import failed: {str(e)}"}, status=500)

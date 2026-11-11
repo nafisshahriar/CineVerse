@@ -10,8 +10,10 @@ class Command(BaseCommand):
         parser.add_argument('--username', type=str, default=None, help='Superuser username')
         parser.add_argument('--email', type=str, default='', help='Superuser email')
         parser.add_argument('--password', type=str, default=None, help='Superuser password')
+        parser.add_argument('--database', type=str, default='default', help='Database alias to update')
 
     def handle(self, *args, **options):
+        db_alias = options.get('database') or 'default'
         User = get_user_model()
         username = (
             options['username']
@@ -46,7 +48,8 @@ class Command(BaseCommand):
             return
 
         # Case-insensitive search for existing user
-        existing_user = User.objects.filter(username__iexact=username).first()
+        manager = User.objects.db_manager(db_alias)
+        existing_user = manager.filter(username__iexact=username).first()
 
         if existing_user:
             existing_user.username = username
@@ -56,12 +59,12 @@ class Command(BaseCommand):
             existing_user.set_password(password)
             if email:
                 existing_user.email = email
-            existing_user.save()
+            existing_user.save(using=db_alias)
             self.stdout.write(self.style.SUCCESS(
                 f"Superuser '{username}' successfully updated with the configured password and staff permissions!"
             ))
         else:
-            User.objects.create_superuser(username=username, email=email, password=password)
+            manager.create_superuser(username=username, email=email, password=password)
             self.stdout.write(self.style.SUCCESS(
                 f"Superuser '{username}' created successfully!"
             ))

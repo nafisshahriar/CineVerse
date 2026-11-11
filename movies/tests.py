@@ -1,4 +1,5 @@
 import json
+import unittest
 from django.test import TestCase, Client, override_settings
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -733,4 +734,173 @@ class ManagementSecurityTests(TestCase):
         self.assertFalse(result['success'])
         self.assertTrue(result.get('is_private_host', False))
         self.assertIn("private local/BDIX network address", result['message'])
+
+
+class DatabasePortableSyncTests(TestCase):
+    """Test portable .json.gz backup/restore and reset_catalog."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            username='admin_sync',
+            email='sync@cineverse.test',
+            password='SyncPassword123!'
+        )
+        self.client.login(username='admin_sync', password='SyncPassword123!')
+
+    def test_database_export_json_gz_excludes_auth_and_imports_cleanly(self):
+        import gzip
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        MediaSource.objects.create(name='Test NAS', url='http://192.168.1.50/movies/')
+        movie = Movie.objects.create(
+            title='Inception 2010 1080p',
+            clean_title='Inception',
+            year=2010,
+            year_str='2010',
+            file_url='http://example.com/' + ('a' * 250) + '/Inception.mkv',
+            source='Test NAS',
+            is_primary_copy=True,
+        )
+        MovieDetail.objects.create(
+            movie=movie,
+            tmdb_id=27205,
+            overview='Dream within a dream.',
+            genres=['Sci-Fi', 'Action'],
+        )
+
+        # 1. Export portable .json.gz catalog
+        export_resp = self.client.get(reverse('manage_database_export') + '?format=json')
+        self.assertEqual(export_resp.status_code, 200)
+        self.assertIn('cineverse_catalog_backup.json.gz', export_resp.get('Content-Disposition', ''))
+
+        payload = json.loads(gzip.decompress(export_resp.content).decode('utf-8'))
+        models_in_dump = {entry['model'] for entry in payload}
+        self.assertIn('movies.movie', models_in_dump)
+        self.assertIn('movies.moviedetail', models_in_dump)
+        self.assertNotIn('auth.user', models_in_dump)
+
+        # 2. Wipe catalog rows and restore from uploaded .json.gz
+        MovieDetail.objects.all().delete()
+        Movie.objects.all().delete()
+        MediaSource.objects.all().delete()
+        self.assertEqual(Movie.objects.count(), 0)
+
+        upload = SimpleUploadedFile(
+            'cineverse_catalog_backup.json.gz',
+            export_resp.content,
+            content_type='application/gzip',
+        )
+        import_resp = self.client.post(reverse('manage_database_import'), {'db_file': upload})
+        self.assertEqual(import_resp.status_code, 200)
+        res_data = json.loads(import_resp.content)
+        self.assertTrue(res_data['success'])
+        self.assertEqual(Movie.objects.count(), 1)
+        self.assertEqual(MovieDetail.objects.count(), 1)
+        self.assertTrue(Movie.objects.first().file_url.endswith('/Inception.mkv'))
+        # Superuser account remains completely intact
+        self.assertTrue(User.objects.filter(username='admin_sync', is_superuser=True).exists())
+
+    def test_database_import_rejects_invalid_sqlite_header(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        bad_upload = SimpleUploadedFile('corrupt.sqlite3', b'not a real sqlite header')
+        resp = self.client.post(reverse('manage_database_import'), {'db_file': bad_upload})
+        self.assertEqual(resp.status_code, 400)
+        data = json.loads(resp.content)
+        self.assertFalse(data['success'])
+        self.assertIn('Invalid SQLite database file header', data['message'])
+
+    def test_reset_catalog_command_preserves_admin(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        Movie.objects.create(
+            title='Temporary Film',
+            clean_title='Temporary Film',
+            file_url='http://example.com/temp.mkv',
+        )
+        out = StringIO()
+        call_command('reset_catalog', '--yes', stdout=out)
+        self.assertEqual(Movie.objects.count(), 0)
+        self.assertTrue(User.objects.filter(username='admin_sync', is_superuser=True).exists())
+
+class PushLocalToOnlineCommandTests(unittest.TestCase):
+    """Test push_local_to_online in an isolated unittest.TestCase with temp SQLite DBs."""
+
+    def test_push_local_to_online_command_sync_and_upsert(self):
+        import os
+        import sqlite3
+        import tempfile
+        from io import StringIO
+        from django.core.management import call_command
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src_db = os.path.join(tmpdir, 'local_source.sqlite3')
+            tgt_db = os.path.join(tmpdir, 'online_target.sqlite3')
+            long_url = 'http://cdn.example.com/' + ('x' * 300) + '/film.mkv'
+
+            conn = sqlite3.connect(src_db)
+            conn.executescript("""
+                CREATE TABLE movies_mediasource (
+                    id INTEGER PRIMARY KEY, name TEXT, url TEXT, source_type TEXT, is_active INTEGER
+                );
+                CREATE TABLE movies_movie (
+                    id INTEGER PRIMARY KEY, title TEXT, clean_title TEXT, year INTEGER, year_str TEXT,
+                    file_url TEXT, source TEXT, is_primary_copy INTEGER
+                );
+                CREATE TABLE movies_moviedetail (
+                    id INTEGER PRIMARY KEY, movie_id INTEGER, tmdb_id INTEGER, overview TEXT, genres TEXT
+                );
+            """)
+            conn.execute(
+                "INSERT INTO movies_mediasource (id, name, url, source_type, is_active) VALUES (1, 'Home', 'http://nas.local/', 'h5ai', 1)"
+            )
+            conn.execute(
+                "INSERT INTO movies_movie (id, title, clean_title, year, year_str, file_url, source, is_primary_copy) VALUES (10, 'Long URL Film', 'Long URL Film', 2024, '2024', ?, 'Home', 1)",
+                (long_url,)
+            )
+            conn.execute(
+                'INSERT INTO movies_moviedetail (id, movie_id, tmdb_id, overview, genres) VALUES (1, 10, 999, \'Plot summary\', \'["Action"]\')'
+            )
+            conn.commit()
+            conn.close()
+
+            target_uri = 'sqlite:///' + tgt_db.replace('\\', '/')
+            out1 = StringIO()
+            call_command(
+                'push_local_to_online',
+                source_sqlite=src_db,
+                target_url=target_uri,
+                stdout=out1,
+            )
+            self.assertIn('Pushed 1 movies and 1 rich details', out1.getvalue())
+
+            # Second run hits upsert mode (updates existing row + adds new row)
+            conn = sqlite3.connect(src_db)
+            conn.execute(
+                "INSERT INTO movies_movie (id, title, clean_title, year, year_str, file_url, source, is_primary_copy) VALUES (11, 'Second Film', 'Second Film', 2025, '2025', 'http://cdn.example.com/second.mkv', 'Home', 1)"
+            )
+            conn.commit()
+            conn.close()
+
+            out2 = StringIO()
+            call_command(
+                'push_local_to_online',
+                source_sqlite=src_db,
+                target_url=target_uri,
+                stdout=out2,
+            )
+            self.assertIn('Synced Movies (+1/~1)', out2.getvalue())
+
+            # Verify target DB contents directly
+            tconn = sqlite3.connect(tgt_db)
+            count = tconn.execute("SELECT COUNT(*) FROM movies_movie").fetchone()[0]
+            stored_url = tconn.execute("SELECT file_url FROM movies_movie WHERE title='Long URL Film'").fetchone()[0]
+            detail_count = tconn.execute("SELECT COUNT(*) FROM movies_moviedetail").fetchone()[0]
+            tconn.close()
+
+            self.assertEqual(count, 2)
+            self.assertEqual(stored_url, long_url)
+            self.assertEqual(detail_count, 1)
+
 
