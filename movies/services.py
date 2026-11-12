@@ -27,12 +27,12 @@ class TMDBService:
         """Base GET request to TMDB API"""
         if not self.api_key:
             return None
-        params = params or {}
-        params['api_key'] = self.api_key
+        req_params = dict(params) if params else {}
+        req_params['api_key'] = self.api_key
         try:
             resp = self.session.get(
                 f"{TMDB_BASE_URL}{endpoint}",
-                params=params,
+                params=req_params,
                 timeout=self.timeout
             )
             resp.raise_for_status()

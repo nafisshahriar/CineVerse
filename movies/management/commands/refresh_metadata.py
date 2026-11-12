@@ -1,7 +1,9 @@
 from django.core.management.base import BaseCommand
+from django.db import close_old_connections
 from django.utils import timezone
 from datetime import datetime, timedelta
 import time
+from movies.cache_utils import invalidate_catalog_cache
 from movies.models import Movie, MovieDetail
 from movies.services import tmdb_service
 from movies.utils import ProgressTracker
@@ -34,8 +36,10 @@ class Command(BaseCommand):
         # Mode 1: Single movie
         if movie_id:
             try:
-                movie = Movie.objects.get(pk=movie_id)
-                self._refresh_movie(movie)
+                movie = Movie.objects.select_related('detail').get(pk=movie_id)
+                ok, _ = self._refresh_movie(movie)
+                if ok:
+                    invalidate_catalog_cache()
             except Movie.DoesNotExist:
                 self.stdout.write(self.style.ERROR(f'Movie ID {movie_id} not found'))
             return
@@ -46,7 +50,7 @@ class Command(BaseCommand):
         # Mode 3: Stale movies
         elif stale_only:
             cutoff = timezone.now() - timedelta(days=14)
-            movies_to_refresh = Movie.objects.filter(
+            movies_to_refresh = Movie.objects.select_related('detail').filter(
                 fetched=True,
                 detail__tmdb_id__isnull=False,
                 last_crawled__lt=cutoff
@@ -57,7 +61,7 @@ class Command(BaseCommand):
                 movies_to_refresh = list(movies_to_refresh)
         # Mode 4: All fetched movies
         else:
-            movies_to_refresh = Movie.objects.filter(
+            movies_to_refresh = Movie.objects.select_related('detail').filter(
                 fetched=True,
                 detail__tmdb_id__isnull=False
             ).order_by('-popularity')
@@ -90,6 +94,9 @@ class Command(BaseCommand):
             self.stdout.write(log_line)
             time.sleep(delay)
 
+        if success_count:
+            invalidate_catalog_cache()
+
         self.stdout.write(self.style.SUCCESS(
             f'\n[OK] Refresh complete! Updated: {success_count}/{total} movies ({rating_shifts} rating changes detected).'
         ))
@@ -115,7 +122,7 @@ class Command(BaseCommand):
             page += 1
 
         self.stdout.write(f'  Found {len(changed_tmdb_ids)} changed movies on TMDB in last {days} days')
-        matched = Movie.objects.filter(detail__tmdb_id__in=changed_tmdb_ids).distinct()
+        matched = Movie.objects.select_related('detail').filter(detail__tmdb_id__in=changed_tmdb_ids).distinct()
         if limit:
             matched = matched[:limit]
         matched_list = list(matched)
@@ -152,6 +159,7 @@ class Command(BaseCommand):
             if not movie.language and data.get('original_language'):
                 movie.language = detect_language(tmdb_code=data['original_language'])
 
+            close_old_connections()
             movie.save()
             return True, shift_str
         except Exception as e:

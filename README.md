@@ -103,7 +103,9 @@ If your media files reside on a private LAN, home NAS, or local ISP FTP (`172.16
 ```
 
 - **Zero Bandwidth Overhead:** CineVerse stores metadata and stream URLs; playback goes directly from your media server to your browser/player.
-- **Seamless Local-to-Cloud Sync:** Run crawls fast from your local PC against private network storage (`db.sqlite3`), then push updates cleanly into Supabase / cloud PostgreSQL without overwriting admin users:
+- **Two Sync Workflows:**
+  - **Direct Cloud Sync (`DATABASE_URL` set in local `.env`):** Local crawls (`crawl_h5ai`, `update_all`, or `http://localhost:8000/manage/`) write **directly to Supabase / cloud PostgreSQL**, so Render shows new movies right away without running `push_local_to_online` (note: your local `db.sqlite3` file stays untouched while `DATABASE_URL` is active).
+  - **Offline SQLite + Push (`DATABASE_URL` blank in local `.env`):** Run crawls fast locally against `db.sqlite3`, then push deltas cleanly into Supabase / cloud PostgreSQL without overwriting admin users:
 
 ```bash
 # Merge/upsert local SQLite catalog into DATABASE_URL (safe incremental sync):

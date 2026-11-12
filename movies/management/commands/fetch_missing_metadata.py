@@ -1,11 +1,12 @@
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import close_old_connections, transaction
 from django.db.models import Q
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import time
+from movies.cache_utils import invalidate_catalog_cache
 from movies.models import Movie, MovieDetail
 from movies.services import tmdb_service
 from movies.utils import ProgressTracker, clean_title_for_search, TMDB_GENRES
@@ -272,6 +273,9 @@ class Command(BaseCommand):
         if batch_to_save:
             self._save_batch(batch_to_save)
 
+        if matched_count:
+            invalidate_catalog_cache()
+
         if stopped_early:
             self.stdout.write(self.style.WARNING(
                 f'\n[STOPPED] Task halted by user. Enriched: {matched_count} movies before stopping.'
@@ -283,6 +287,12 @@ class Command(BaseCommand):
 
     def _save_batch(self, items: list):
         """Perform atomic batch database writes strictly on the main thread."""
+        close_old_connections()
+        detail_movie_ids = [item['id'] for item in items if item.get('success') and item.get('detail_data')]
+        existing_details = (
+            {d.movie_id: d for d in MovieDetail.objects.filter(movie_id__in=detail_movie_ids)}
+            if detail_movie_ids else {}
+        )
         with transaction.atomic():
             for item in items:
                 m_id = item['id']
@@ -300,9 +310,12 @@ class Command(BaseCommand):
                 detail_data = item.get('detail_data')
                 if detail_data:
                     try:
-                        detail, _ = MovieDetail.objects.get_or_create(movie_id=m_id)
-                        for k, v in detail_data.items():
-                            setattr(detail, k, v)
+                        detail = existing_details.get(m_id)
+                        if detail is None:
+                            detail = MovieDetail(movie_id=m_id, **detail_data)
+                        else:
+                            for k, v in detail_data.items():
+                                setattr(detail, k, v)
                         detail.save()
                     except Exception:
                         pass

@@ -480,17 +480,6 @@ def movie_detail_ajax(request, movie_id):
                 movie.runtime = extended.get('runtime')
                 movie.save(update_fields=['runtime'])
 
-    # On-demand trailer resolution if missing
-    if detail and not detail.trailer_key and detail.tmdb_id:
-        try:
-            trailer_info = tmdb_service.get_movie_trailer(detail.tmdb_id)
-            if trailer_info and trailer_info.get('trailer_key'):
-                detail.trailer_key = trailer_info['trailer_key']
-                detail.trailer_url = trailer_info['trailer_url']
-                detail.save(update_fields=['trailer_key', 'trailer_url'])
-        except Exception:
-            pass
-
     # Ensure movie runtime is synced from detail
     if detail and detail.runtime and not movie.runtime:
         movie.runtime = detail.runtime
@@ -506,34 +495,54 @@ def movie_detail_ajax(request, movie_id):
             else:
                 Movie.objects.filter(id=movie.id).update(genres=g_str)
 
-    # Ensure authentic IMDb rating and ID
+    # On-demand trailer resolution if missing (cache negative misses for 1h)
+    version_ts = int(movie.last_updated.timestamp() * 1_000_000) if movie.last_updated else 0
+    if detail and not detail.trailer_key and detail.tmdb_id:
+        trailer_miss_key = f'cineverse:trailer_miss:{detail.tmdb_id}:{version_ts}'
+        if not cache.get(trailer_miss_key):
+            try:
+                trailer_info = tmdb_service.get_movie_trailer(detail.tmdb_id)
+                if trailer_info and trailer_info.get('trailer_key'):
+                    detail.trailer_key = trailer_info['trailer_key']
+                    detail.trailer_url = trailer_info['trailer_url']
+                    detail.save(update_fields=['trailer_key', 'trailer_url'])
+                else:
+                    cache.set(trailer_miss_key, 1, 3600)
+            except Exception:
+                pass
+
+    # Ensure authentic IMDb rating and ID (cache negative misses for 1h)
     if not movie.imdb_rating:
         known_id = movie.imdb_id or (detail.imdb_id if detail else '')
-        res = fetch_imdb_rating_and_id(search_title, movie.year, known_imdb_id=known_id)
-        rate = res[0]
-        i_id = res[1] if len(res) > 1 else None
-        g_list = res[2] if len(res) > 2 else []
-        if rate:
-            update_data = {'imdb_rating': rate}
-            if i_id and not movie.imdb_id:
-                update_data['imdb_id'] = i_id
-            if g_list and not movie.genres:
-                update_data['genres'] = ', '.join(g_list)
-                movie.genres = update_data['genres']
-            if movie.group_key:
-                Movie.objects.filter(group_key=movie.group_key).update(**update_data)
+        imdb_miss_key = f'cineverse:imdb_miss:{movie.id}:{known_id}:{version_ts}'
+        if not cache.get(imdb_miss_key):
+            res = fetch_imdb_rating_and_id(search_title, movie.year, known_imdb_id=known_id)
+            rate = res[0]
+            i_id = res[1] if len(res) > 1 else None
+            g_list = res[2] if len(res) > 2 else []
+            if rate:
+                update_data = {'imdb_rating': rate}
+                if i_id and not movie.imdb_id:
+                    update_data['imdb_id'] = i_id
+                if g_list and not movie.genres:
+                    update_data['genres'] = ', '.join(g_list)
+                    movie.genres = update_data['genres']
+                if movie.group_key:
+                    Movie.objects.filter(group_key=movie.group_key).update(**update_data)
+                else:
+                    Movie.objects.filter(id=movie.id).update(**update_data)
+                movie.imdb_rating = rate
+                if i_id and not movie.imdb_id:
+                    movie.imdb_id = i_id
+                if detail:
+                    detail.imdb_rating = rate
+                    if i_id and not detail.imdb_id:
+                        detail.imdb_id = i_id
+                    if g_list and not detail.genres:
+                        detail.genres = g_list
+                    detail.save()
             else:
-                Movie.objects.filter(id=movie.id).update(**update_data)
-            movie.imdb_rating = rate
-            if i_id and not movie.imdb_id:
-                movie.imdb_id = i_id
-            if detail:
-                detail.imdb_rating = rate
-                if i_id and not detail.imdb_id:
-                    detail.imdb_id = i_id
-                if g_list and not detail.genres:
-                    detail.genres = g_list
-                detail.save()
+                cache.set(imdb_miss_key, 1, 3600)
 
     # Fetch all copies sharing the same group_key
     all_copies = []

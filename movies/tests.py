@@ -1035,5 +1035,122 @@ class PerformanceAndSortTests(TestCase):
             ssl_resp = self.client.get(reverse('health_check'))
             self.assertEqual(ssl_resp.status_code, 200)
 
+    def test_crawl_h5ai_preloaded_cache_skips_without_per_item_queries(self):
+        from unittest.mock import patch
+        from movies.management.commands.crawl_h5ai import Command as CrawlCommand
+        from movies.models import CrawledDirectory, FailedParse
+
+        CrawledDirectory.objects.create(
+            url='http://nas.local/movies/Inception%20(2010)/',
+            movie_count=1,
+        )
+        Movie.objects.create(
+            title='Inception.2010.mkv',
+            clean_title='Inception',
+            year=2010,
+            year_str='2010',
+            file_url='http://nas.local/movies/Inception.2010.mkv',
+            directory_url='http://nas.local/movies/',
+            source='Local NAS',
+            fetched=True,
+            metadata_status='ok',
+        )
+        cmd = CrawlCommand()
+        cmd._load_caches()
+        stats = {
+            'total_scanned': 0, 'new_movies': 0, 'updated_movies': 0,
+            'metadata_fetched': 0, 'skipped_unchanged': 0, 'skipped_scheduled': 0,
+            'failed_no_media': 0, 'failed_timeout': 0, 'failed_error': 0, 'direct_files': 0,
+        }
+
+        with patch('movies.management.commands.crawl_h5ai.fetch_poster_and_details') as mock_fetch:
+            with self.assertNumQueries(0):
+                self.assertTrue(cmd._should_skip_directory('http://nas.local/movies/Inception%20(2010)/', None, False))
+                cmd._process_media_file(
+                    {
+                        'name': 'Inception.2010.mkv',
+                        'url': 'http://nas.local/movies/Inception.2010.mkv',
+                        'directory_url': 'http://nas.local/movies/',
+                        'dir_name': '',
+                        'raw': '',
+                    },
+                    stats,
+                    force=False,
+                )
+                cmd._remove_from_failed('http://nas.local/movies/Inception%20(2010)/')
+            mock_fetch.assert_not_called()
+
+        self.assertEqual(stats['skipped_unchanged'], 1)
+        cmd._update_directory_cache('http://nas.local/movies/NewDir/', None, 2)
+        cmd._flush_dir_cache_updates()
+        self.assertTrue(CrawledDirectory.objects.filter(url='http://nas.local/movies/NewDir/', movie_count=2).exists())
+
+    def test_movie_detail_ajax_caches_negative_external_lookups(self):
+        from unittest.mock import patch
+        from django.core.cache import cache
+        from django.test import override_settings
+
+        m = Movie.objects.create(
+            title='Obscure Indie Film',
+            clean_title='Obscure Indie Film',
+            year=2024,
+            file_url='http://example.com/obscure.mkv',
+            metadata_status='ok',
+            fetched=True,
+        )
+        MovieDetail.objects.create(movie=m, tmdb_id=999991)
+
+        locmem = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'test-detail-miss'}}
+        with override_settings(CACHES=locmem):
+            cache.clear()
+            with patch('movies.views.tmdb_service.get_movie_trailer', return_value=None) as mock_trailer, \
+                 patch('movies.views.fetch_imdb_rating_and_id', return_value=(None, None, [])) as mock_imdb:
+                r1 = self.client.get(reverse('movie_detail', args=[m.id]))
+                self.assertEqual(r1.status_code, 200)
+                self.assertEqual(mock_trailer.call_count, 1)
+                self.assertEqual(mock_imdb.call_count, 1)
+
+                # Second request skips repeated failing lookups thanks to negative cache
+                r2 = self.client.get(reverse('movie_detail', args=[m.id]))
+                self.assertEqual(r2.status_code, 200)
+                self.assertEqual(mock_trailer.call_count, 1)
+                self.assertEqual(mock_imdb.call_count, 1)
+
+                # Saving/refreshing the movie bumps last_updated and invalidates miss keys
+                m.save()
+                r3 = self.client.get(reverse('movie_detail', args=[m.id]))
+                self.assertEqual(r3.status_code, 200)
+                self.assertEqual(mock_trailer.call_count, 2)
+                self.assertEqual(mock_imdb.call_count, 2)
+            cache.clear()
+
+    def test_fetch_command_batch_save_uses_bounded_queries(self):
+        from movies.management.commands.fetch_genres import Command as GenreCommand
+
+        movies = []
+        for idx in range(3):
+            m = Movie.objects.create(
+                title=f'Batch Movie {idx}',
+                clean_title=f'Batch Movie {idx}',
+                year=2024,
+                file_url=f'http://example.com/batch_{idx}.mkv',
+                group_key='',
+            )
+            MovieDetail.objects.create(movie=m, tmdb_id=7000 + idx)
+            movies.append(m)
+
+        items = [
+            {'id': m.id, 'genres': ['Action', 'Sci-Fi'], 'tmdb_id': 7000 + idx, 'group_key': ''}
+            for idx, m in enumerate(movies)
+        ]
+        cmd = GenreCommand()
+        # 1 MovieDetail batch SELECT + SAVEPOINT + 3 Movie UPDATEs + 1 bulk MovieDetail UPDATE + RELEASE SAVEPOINT
+        with self.assertNumQueries(7):
+            cmd._save_batch(items)
+        for m in movies:
+            m.refresh_from_db()
+            self.assertEqual(m.genres, 'Action, Sci-Fi')
+
+
 
 

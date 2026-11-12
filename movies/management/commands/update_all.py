@@ -1,5 +1,7 @@
 from django.core.management.base import BaseCommand
+from django.db import close_old_connections
 from django.utils import timezone
+from movies.cache_utils import invalidate_catalog_cache
 from movies.models import Movie, MovieDetail
 from movies.services import tmdb_service
 from movies.utils import ProgressTracker, detect_language
@@ -110,22 +112,26 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.NOTICE('Step 5/5: Metrics refresh skipped (use --refresh-metrics to run)\n'))
 
+        if stats['details_fetched'] or stats['credits_fetched'] or stats['retried']:
+            invalidate_catalog_cache()
+
         # ── Summary ─────────────────────────────────────────────────────
         self._print_summary(stats)
 
     def _fetch_details(self, stats, force, limit, delay):
         """Fetch MovieDetail for movies that don't have one yet."""
         if force:
-            movies = Movie.objects.filter(fetched=True)
+            movies_qs = Movie.objects.filter(fetched=True)
         else:
-            movies = Movie.objects.filter(fetched=True).exclude(
+            movies_qs = Movie.objects.filter(fetched=True).exclude(
                 detail__tmdb_id__isnull=False
             )
 
-        total = movies.count()
         if limit:
-            movies = movies[:limit]
-            total = min(total, limit)
+            movies = list(movies_qs[:limit])
+        else:
+            movies = list(movies_qs)
+        total = len(movies)
 
         if total == 0:
             self.stdout.write('  No movies needing TMDB details')
@@ -145,6 +151,7 @@ class Command(BaseCommand):
                     self.stdout.write(tracker.tick(False, search_title, "No TMDB match"))
                     continue
 
+                close_old_connections()
                 detail, _ = MovieDetail.objects.get_or_create(movie=movie)
                 detail.tmdb_id = extended.get('tmdb_id')
                 detail.overview = extended.get('overview', '')
@@ -188,16 +195,17 @@ class Command(BaseCommand):
     def _fetch_credits(self, stats, force, limit, delay):
         """Fetch cast/director for MovieDetails that are missing them."""
         if force:
-            details = MovieDetail.objects.filter(tmdb_id__isnull=False)
+            details_qs = MovieDetail.objects.select_related('movie').filter(tmdb_id__isnull=False)
         else:
-            details = MovieDetail.objects.filter(
+            details_qs = MovieDetail.objects.select_related('movie').filter(
                 tmdb_id__isnull=False, cast=[]
             )
 
-        total = details.count()
         if limit:
-            details = details[:limit]
-            total = min(total, limit)
+            details = list(details_qs[:limit])
+        else:
+            details = list(details_qs)
+        total = len(details)
 
         if total == 0:
             self.stdout.write('  No movies needing credits')
@@ -213,6 +221,7 @@ class Command(BaseCommand):
                 director = credits_data.get('director', {})
 
                 if cast or director:
+                    close_old_connections()
                     detail.cast = cast
                     detail.director = director
                     detail.save()
@@ -232,7 +241,7 @@ class Command(BaseCommand):
     def _retry_failed(self, stats, delay):
         """Retry movies whose metadata_status is 'missing'/'failed' and next_crawl has passed."""
         now = timezone.now()
-        retryable = Movie.objects.filter(
+        retryable_qs = Movie.objects.filter(
             metadata_status__in=['missing', 'failed'],
         ).filter(
             next_crawl__lte=now
@@ -241,8 +250,8 @@ class Command(BaseCommand):
             next_crawl__isnull=True
         )
 
-        retryable = retryable.distinct()[:30]
-        count = retryable.count()
+        retryable = list(retryable_qs.distinct()[:30])
+        count = len(retryable)
         if count == 0:
             self.stdout.write('  No movies eligible for retry')
             return
@@ -256,6 +265,7 @@ class Command(BaseCommand):
                 extended = tmdb_service.get_extended_details(
                     search_title, movie.year_str or ''
                 )
+                close_old_connections()
                 if extended:
                     movie.poster_url = extended.get('poster_url') or movie.poster_url
                     movie.popularity = extended.get('popularity') or movie.popularity
@@ -275,6 +285,7 @@ class Command(BaseCommand):
                     movie.save()
                     self.stdout.write(tracker.tick(False, movie.display_title, "Still missing"))
             except Exception as e:
+                close_old_connections()
                 movie.next_crawl = now + timedelta(hours=24)
                 movie.save()
                 self.stdout.write(tracker.tick(False, movie.display_title, str(e)))

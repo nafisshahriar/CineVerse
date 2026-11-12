@@ -1,10 +1,11 @@
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import close_old_connections, transaction
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import os
 import requests
 import re
+from movies.cache_utils import invalidate_catalog_cache
 from movies.models import Movie, MovieDetail
 from movies.utils import ProgressTracker, clean_title_for_search
 from movies.task_runner import is_task_stopped
@@ -202,6 +203,9 @@ class Command(BaseCommand):
         if batch_to_update:
             self._save_batch(batch_to_update)
 
+        if success_count:
+            invalidate_catalog_cache()
+
         if stopped_early:
             self.stdout.write(self.style.WARNING(
                 f'\n[STOPPED] Task halted by user. Successfully fetched genres for {success_count} movies before stopping.'
@@ -213,6 +217,13 @@ class Command(BaseCommand):
 
     def _save_batch(self, items: list):
         """Save a batch of genre updates strictly on the main thread."""
+        close_old_connections()
+        movie_ids = [item['id'] for item in items if item.get('genres')]
+        existing_details = (
+            {d.movie_id: d for d in MovieDetail.objects.filter(movie_id__in=movie_ids)}
+            if movie_ids else {}
+        )
+        details_to_update = []
         with transaction.atomic():
             for item in items:
                 m_id = item['id']
@@ -228,13 +239,15 @@ class Command(BaseCommand):
                 else:
                     Movie.objects.filter(id=m_id).update(genres=genre_str)
 
-                # Update MovieDetail if exists
+                detail = existing_details.get(m_id)
+                if detail:
+                    detail.genres = genres
+                    if tmdb_id and not detail.tmdb_id:
+                        detail.tmdb_id = tmdb_id
+                    details_to_update.append(detail)
+
+            if details_to_update:
                 try:
-                    detail = MovieDetail.objects.filter(movie_id=m_id).first()
-                    if detail:
-                        detail.genres = genres
-                        if tmdb_id and not detail.tmdb_id:
-                            detail.tmdb_id = tmdb_id
-                        detail.save(update_fields=['genres', 'tmdb_id'] if tmdb_id else ['genres'])
+                    MovieDetail.objects.bulk_update(details_to_update, ['genres', 'tmdb_id'])
                 except Exception:
                     pass

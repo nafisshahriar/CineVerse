@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand, CommandError
-from django.db import IntegrityError
+from django.db import IntegrityError, close_old_connections
 from django.utils import timezone
+from movies.cache_utils import invalidate_catalog_cache
 from movies.models import Movie, CrawledDirectory, FailedParse
 from movies.task_runner import is_task_stopped
 from movies.utils import (
@@ -16,6 +17,14 @@ from urllib.parse import unquote
 
 class Command(BaseCommand):
     help = 'Crawl an H5AI root URL and import movies (timestamp-aware, multi-source crawler)'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.verbose = False
+        self._dir_cache = None
+        self._pending_dir_updates = {}
+        self._failed_urls = None
+        self._movie_cache = None
 
     def add_arguments(self, parser):
         parser.add_argument('--url', required=True, help='Root H5AI URL to crawl')
@@ -52,6 +61,8 @@ class Command(BaseCommand):
         limit_str = str(max_items) if max_items else 'unlimited'
         src_str = custom_source or 'Auto-detect'
         self.stdout.write(f"Options: source={src_str}, force={force}, retry_failed={retry_failed}, max_items={limit_str}")
+
+        self._load_caches()
 
         if retry_failed:
             self._retry_failed_parses(stats, force, timeout, custom_source)
@@ -115,6 +126,7 @@ class Command(BaseCommand):
 
             if custom_source:
                 try:
+                    close_old_connections()
                     from movies.models import MediaSource
                     MediaSource.objects.update_or_create(
                         name=custom_source,
@@ -136,29 +148,126 @@ class Command(BaseCommand):
             if self.verbose:
                 self.stdout.write(traceback.format_exc())
             raise CommandError(str(e))
+        finally:
+            self._flush_dir_cache_updates()
+            if stats['new_movies'] or stats['updated_movies'] or stats['metadata_fetched'] or custom_source:
+                invalidate_catalog_cache()
 
         self._print_summary(stats)
+
+    def _load_caches(self):
+        """Preload catalog skip tables once so remote Postgres crawls avoid per-item round-trips."""
+        close_old_connections()
+        self._pending_dir_updates = {}
+        self._dir_cache = {
+            url: (remote_modified, movie_count, last_crawled)
+            for url, remote_modified, movie_count, last_crawled
+            in CrawledDirectory.objects.values_list('url', 'remote_modified', 'movie_count', 'last_crawled')
+        }
+        self._failed_urls = set(FailedParse.objects.values_list('url', flat=True))
+        self._movie_cache = {
+            file_url: {
+                'id': m_id,
+                'clean_title': clean_title,
+                'source': source,
+                'fetched': fetched,
+                'next_crawl': next_crawl,
+                'remote_modified': remote_modified,
+            }
+            for file_url, m_id, clean_title, source, fetched, next_crawl, remote_modified
+            in Movie.objects.values_list(
+                'file_url', 'id', 'clean_title', 'source', 'fetched', 'next_crawl', 'remote_modified'
+            )
+        }
+
+    def _flush_dir_cache_updates(self):
+        """Persist buffered directory timestamp/count updates in batches."""
+        if not self._pending_dir_updates:
+            return
+        pending = self._pending_dir_updates
+        self._pending_dir_updates = {}
+
+        close_old_connections()
+        now = timezone.now()
+        existing = {
+            d.url: d
+            for d in CrawledDirectory.objects.filter(url__in=list(pending.keys()))
+        }
+        to_create = []
+        to_update = []
+        for url, (remote_mod, movie_count) in pending.items():
+            row = existing.get(url)
+            if row is None:
+                to_create.append(
+                    CrawledDirectory(
+                        url=url,
+                        remote_modified=remote_mod,
+                        movie_count=movie_count,
+                    )
+                )
+            else:
+                row.remote_modified = remote_mod
+                row.movie_count = movie_count
+                row.last_crawled = now
+                to_update.append(row)
+
+        if to_create:
+            CrawledDirectory.objects.bulk_create(to_create, batch_size=200, ignore_conflicts=True)
+        if to_update:
+            CrawledDirectory.objects.bulk_update(
+                to_update,
+                ['remote_modified', 'movie_count', 'last_crawled'],
+                batch_size=200,
+            )
 
     def _should_skip_directory(self, dir_url: str, remote_mod, force: bool) -> bool:
         if force:
             return False
-        try:
-            cached = CrawledDirectory.objects.get(url=dir_url)
-            if remote_mod and cached.remote_modified:
-                if remote_mod <= cached.remote_modified:
-                    return True
-            # If server does not report timestamps, but directory was already crawled
-            # within last 24 hours and has known movies, skip re-scanning unless --force is set
-            if not remote_mod and cached.movie_count > 0 and cached.last_crawled:
-                if (timezone.now() - cached.last_crawled) < timedelta(hours=24):
-                    return True
-        except CrawledDirectory.DoesNotExist:
-            pass
+        safe_url = (dir_url or '')[:1000]
+        if self._dir_cache is not None:
+            cached_tuple = self._dir_cache.get(safe_url)
+            if cached_tuple is None:
+                return False
+            cached_mod, movie_count, last_crawled = cached_tuple
+        else:
+            try:
+                cached = CrawledDirectory.objects.get(url=safe_url)
+                cached_mod = cached.remote_modified
+                movie_count = cached.movie_count
+                last_crawled = cached.last_crawled
+            except CrawledDirectory.DoesNotExist:
+                return False
+
+        if remote_mod and cached_mod and remote_mod <= cached_mod:
+            return True
+        # If server does not report timestamps, but directory was already crawled
+        # within last 24 hours and has known movies, skip re-scanning unless --force is set
+        if not remote_mod and movie_count > 0 and last_crawled:
+            if (timezone.now() - last_crawled) < timedelta(hours=24):
+                return True
         return False
 
     def _update_directory_cache(self, dir_url: str, remote_mod, movie_count: int):
+        safe_url = (dir_url or '')[:1000]
+        if self._dir_cache is not None:
+            now = timezone.now()
+            existing = self._dir_cache.get(safe_url)
+            if (
+                existing is not None
+                and existing[0] == remote_mod
+                and existing[1] == movie_count
+                and existing[2] is not None
+                and (now - existing[2]) < timedelta(hours=6)
+            ):
+                return
+            self._dir_cache[safe_url] = (remote_mod, movie_count, now)
+            self._pending_dir_updates[safe_url] = (remote_mod, movie_count)
+            if len(self._pending_dir_updates) >= 50:
+                self._flush_dir_cache_updates()
+            return
+
         CrawledDirectory.objects.update_or_create(
-            url=(dir_url or '')[:1000],
+            url=safe_url,
             defaults={
                 'remote_modified': remote_mod,
                 'movie_count': movie_count,
@@ -169,8 +278,10 @@ class Command(BaseCommand):
         clean = name.strip(' /\\').lower()
         if clean in IGNORED_DIRS:
             return
+        safe_url = (url or '')[:1000]
+        close_old_connections()
         FailedParse.objects.update_or_create(
-            url=(url or '')[:1000],
+            url=safe_url,
             defaults={
                 'name': (name or '')[:512],
                 'reason': (reason or '')[:32],
@@ -178,9 +289,63 @@ class Command(BaseCommand):
                 'error_message': error[:500] if error else '',
             }
         )
+        if self._failed_urls is not None:
+            self._failed_urls.add(safe_url)
 
     def _remove_from_failed(self, url: str):
-        FailedParse.objects.filter(url=(url or '')[:1000]).delete()
+        safe_url = (url or '')[:1000]
+        if self._failed_urls is not None:
+            if safe_url not in self._failed_urls:
+                return
+            close_old_connections()
+            FailedParse.objects.filter(url=safe_url).delete()
+            self._failed_urls.discard(safe_url)
+            return
+        FailedParse.objects.filter(url=safe_url).delete()
+
+    def _remember_movie(self, movie: Movie):
+        if self._movie_cache is None or not movie:
+            return
+        self._movie_cache[(movie.file_url or '')[:1000]] = {
+            'id': movie.id,
+            'clean_title': movie.clean_title,
+            'source': movie.source,
+            'fetched': movie.fetched,
+            'next_crawl': movie.next_crawl,
+            'remote_modified': movie.remote_modified,
+        }
+
+    def _try_skip_cached_movie(
+        self, file_url: str, custom_source: str, remote_mod, check_remote_mod: bool, stats: dict
+    ):
+        """Fast in-memory check for already-known movies to avoid per-file DB queries."""
+        if self._movie_cache is None:
+            return None
+        cached = self._movie_cache.get((file_url or '')[:1000])
+        if cached is None or not cached.get('clean_title'):
+            return None
+        safe_custom_source = (custom_source or '')[:64]
+        if safe_custom_source and cached.get('source') != safe_custom_source:
+            return None
+
+        now = timezone.now()
+        next_crawl = cached.get('next_crawl')
+        if next_crawl and next_crawl > now:
+            stats['skipped_scheduled'] += 1
+            return cached['clean_title']
+
+        if not cached.get('fetched'):
+            return None
+
+        if check_remote_mod:
+            cached_mod = cached.get('remote_modified')
+            if remote_mod and cached_mod and remote_mod <= cached_mod:
+                stats['skipped_unchanged'] += 1
+                return cached['clean_title']
+            return None
+
+        stats['skipped_unchanged'] += 1
+        return cached['clean_title']
 
     def _get_or_create_movie(
         self, file_url: str, directory_url: str, info: dict,
@@ -199,6 +364,7 @@ class Command(BaseCommand):
         safe_year_str = (info.get('year_str') or '')[:10]
         safe_custom_source = (custom_source or '')[:64]
 
+        close_old_connections()
         try:
             movie, is_new = Movie.objects.get_or_create(
                 file_url=safe_url,
@@ -237,6 +403,7 @@ class Command(BaseCommand):
             if changed_fields:
                 movie.save()
 
+        self._remember_movie(movie)
         return movie, is_new
 
     def _process_media_file(self, item: dict, stats: dict, force: bool, custom_source: str = ''):
@@ -245,6 +412,16 @@ class Command(BaseCommand):
         raw = item.get('raw', '')
         remote_mod = extract_last_modified_from_text(raw)
         dir_name = item.get('dir_name', '')
+
+        if not force:
+            skipped_title = self._try_skip_cached_movie(
+                href, custom_source, remote_mod, check_remote_mod=False, stats=stats
+            )
+            if skipped_title is not None:
+                if item.get('directory_url'):
+                    self._update_directory_cache(item['directory_url'], remote_mod, 1)
+                self.stdout.write(self.style.NOTICE(f"  [SKIPPED] {skipped_title} (unchanged)"))
+                return
 
         info = parse_movie_info(dir_name=dir_name, file_name=name, file_url=href)
         source_name = custom_source or info['source'] or detect_source(href)
@@ -307,6 +484,13 @@ class Command(BaseCommand):
             return
 
         media_name, media_link, media_raw = media[0]
+        if not force:
+            skipped_title = self._try_skip_cached_movie(
+                media_link, custom_source, remote_mod, check_remote_mod=True, stats=stats
+            )
+            if skipped_title is not None:
+                return
+
         info = parse_movie_info(dir_name=name, file_name=media_name, file_url=media_link)
         source_name = custom_source or info['source'] or detect_source(media_link)
 
@@ -340,6 +524,7 @@ class Command(BaseCommand):
         search_title = movie.clean_title or movie.title
         try:
             details = fetch_poster_and_details(search_title, movie.year_str or '')
+            close_old_connections()
 
             if details:
                 movie.poster_url = (details.get('poster_url') or movie.poster_url or '')[:512]
@@ -379,6 +564,7 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING(f"Missing metadata: {movie.display_title}"))
 
         except requests.exceptions.Timeout:
+            close_old_connections()
             stats['failed_timeout'] += 1
             movie.metadata_status = 'missing'
             movie.next_crawl = timezone.now() + timedelta(hours=2)
@@ -387,12 +573,15 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(f"Timeout fetching metadata: {movie.display_title}"))
 
         except Exception as e:
+            close_old_connections()
             stats['failed_error'] += 1
             movie.metadata_status = 'failed'
             movie.next_crawl = timezone.now() + timedelta(hours=12)
             movie.last_crawled = timezone.now()
             movie.save()
             self.stdout.write(self.style.ERROR(f"Error fetching {movie.display_title}: {e}"))
+        finally:
+            self._remember_movie(movie)
 
     def _retry_failed_parses(self, stats: dict, force: bool, timeout: int, custom_source: str = ''):
         failed_entries = FailedParse.objects.filter(retry_count__gt=0).order_by('retry_count')

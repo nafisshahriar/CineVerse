@@ -1,11 +1,12 @@
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import close_old_connections, transaction
 from django.db.models import F
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import os
 import requests
 import time
+from movies.cache_utils import invalidate_catalog_cache
 from movies.models import Movie, MovieDetail
 from movies.utils import fetch_imdb_rating_and_id, ProgressTracker, clean_title_for_search
 from movies.task_runner import is_task_stopped
@@ -205,6 +206,9 @@ class Command(BaseCommand):
         if batch_to_update:
             self._save_batch(batch_to_update)
 
+        if success_count:
+            invalidate_catalog_cache()
+
         if stopped_early:
             self.stdout.write(self.style.WARNING(
                 f'\n[STOPPED] Task halted by user. Successfully fetched IMDb ratings for {success_count} movies before stopping.'
@@ -216,6 +220,13 @@ class Command(BaseCommand):
 
     def _save_batch(self, items: list):
         """Save a batch of IMDb rating updates strictly on the main thread."""
+        close_old_connections()
+        movie_ids = [item['id'] for item in items if item.get('rating') is not None]
+        existing_details = (
+            {d.movie_id: d for d in MovieDetail.objects.filter(movie_id__in=movie_ids)}
+            if movie_ids else {}
+        )
+        details_to_update = []
         with transaction.atomic():
             for item in items:
                 m_id = item['id']
@@ -239,21 +250,25 @@ class Command(BaseCommand):
                 else:
                     Movie.objects.filter(id=m_id).update(**sync_data)
 
-                # Update detail model if present
+                detail = existing_details.get(m_id)
+                if detail:
+                    d_updated = False
+                    if rating and detail.imdb_rating != rating:
+                        detail.imdb_rating = rating
+                        d_updated = True
+                    if imdb_id and not detail.imdb_id:
+                        detail.imdb_id = imdb_id
+                        d_updated = True
+                    if genres and not detail.genres:
+                        detail.genres = genres
+                        d_updated = True
+                    if d_updated:
+                        details_to_update.append(detail)
+
+            if details_to_update:
                 try:
-                    detail = MovieDetail.objects.filter(movie_id=m_id).first()
-                    if detail:
-                        d_updated = False
-                        if rating and detail.imdb_rating != rating:
-                            detail.imdb_rating = rating
-                            d_updated = True
-                        if imdb_id and not detail.imdb_id:
-                            detail.imdb_id = imdb_id
-                            d_updated = True
-                        if genres and not detail.genres:
-                            detail.genres = genres
-                            d_updated = True
-                        if d_updated:
-                            detail.save()
+                    MovieDetail.objects.bulk_update(
+                        details_to_update, ['imdb_rating', 'imdb_id', 'genres']
+                    )
                 except Exception:
                     pass
