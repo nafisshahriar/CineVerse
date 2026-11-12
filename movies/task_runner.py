@@ -7,6 +7,7 @@ from collections import deque
 from datetime import datetime
 from django.core.management import call_command
 from django.db import connection, connections
+from .cache_utils import invalidate_catalog_cache
 
 
 class TaskOutput(io.StringIO):
@@ -296,6 +297,7 @@ class BackgroundTaskManager:
             self.append_log(tb)
         finally:
             connections.close_all()
+            invalidate_catalog_cache()
 
     def _execute_task(self, task_type: str, params: dict):
         out_stream = TaskOutput(callback=self.append_log)

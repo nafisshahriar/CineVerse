@@ -43,13 +43,20 @@ jobs:
         run: |
           python manage.py makemigrations --check --dry-run
 
+      - name: Verify Static Assets Collection
+        env:
+          DJANGO_SECRET_KEY: ci-test-secret-key
+          DJANGO_DEBUG: "False"
+        run: |
+          python manage.py collectstatic --noinput
+
       - name: Run Automated Test Suite
         env:
           DJANGO_SECRET_KEY: ci-test-secret-key
           DJANGO_DEBUG: "False"
           MANAGE_REQUIRE_AUTH: "True"
         run: |
-          python manage.py test
+          python manage.py test --exclude-tag=network -v 2
 
   deploy:
     name: Deploy to Production (CD)

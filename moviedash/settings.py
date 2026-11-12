@@ -42,6 +42,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    # Compress dynamic HTML/JSON responses (Django >= 4.2 includes BREACH mitigation)
+    'django.middleware.gzip.GZipMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -80,15 +82,26 @@ if DATABASE_URL:
     DATABASES = {
         'default': dj_database_url.config(
             default=DATABASE_URL,
-            conn_max_age=300,
+            conn_max_age=int(os.getenv('DB_CONN_MAX_AGE', '60')),
             conn_health_checks=True,
         )
     }
+    if DATABASES['default'].get('ENGINE', '').endswith('postgresql'):
+        _pg_options = DATABASES['default'].setdefault('OPTIONS', {})
+        # Fail fast instead of hanging when the remote database is unreachable
+        _pg_options.setdefault('connect_timeout', int(os.getenv('DB_CONNECT_TIMEOUT', '10')))
+        # Detect half-open TCP connections dropped by NAT / poolers
+        _pg_options.setdefault('keepalives', 1)
+        _pg_options.setdefault('keepalives_idle', 30)
+        _pg_options.setdefault('keepalives_interval', 10)
+        _pg_options.setdefault('keepalives_count', 3)
+        # Identify CineVerse connections in pg_stat_activity
+        _pg_options.setdefault('application_name', 'cineverse')
 else:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+            'NAME': Path(os.getenv('SQLITE_DB_PATH', str(BASE_DIR / 'db.sqlite3'))),
             'OPTIONS': {
                 'init_command': (
                     'PRAGMA journal_mode=WAL;'
@@ -102,6 +115,20 @@ else:
     }
 
 AUTH_PASSWORD_VALIDATORS = []
+
+# In-process cache for cheap, slowly-changing catalog stats (header counts, source list).
+# Tests use a dummy cache so every test sees fresh database state.
+CACHES = {
+    'default': {
+        'BACKEND': (
+            'django.core.cache.backends.dummy.DummyCache' if RUNNING_TESTS
+            else 'django.core.cache.backends.locmem.LocMemCache'
+        ),
+        'LOCATION': 'cineverse-default',
+        'TIMEOUT': 300,
+    }
+}
+CATALOG_STATS_CACHE_SECONDS = int(os.getenv('CATALOG_STATS_CACHE_SECONDS', '60'))
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'

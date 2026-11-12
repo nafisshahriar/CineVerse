@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path('', views.index, name='movies_index'),
+    path('health/', views.health_check, name='health_check'),
     path('search_ajax/', views.search_ajax, name='movies_search_ajax'),
     path('movie/<int:movie_id>/detail/', views.movie_detail_ajax, name='movie_detail'),
     path('movie/<int:movie_id>/refresh/', views.movie_refresh_ajax, name='movie_refresh_ajax'),

@@ -1,6 +1,6 @@
 import json
 import unittest
-from django.test import TestCase, Client, override_settings
+from django.test import TestCase, Client, override_settings, tag
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from movies.models import Movie, MovieDetail, MediaSource
@@ -289,6 +289,7 @@ class ManagementSecurityTests(TestCase):
         self.assertEqual(status['progress_percent'], 100.0)
         self.assertEqual(status['remaining'], 0)
 
+    @tag('network')
     def test_fetch_imdb_rating_known_id(self):
         # Inception tt1375666
         rate, i_id, genres = fetch_imdb_rating_and_id("Inception", 2010, known_imdb_id="tt1375666")
@@ -296,6 +297,7 @@ class ManagementSecurityTests(TestCase):
         self.assertEqual(i_id, "tt1375666")
         self.assertGreater(rate, 8.0)
 
+    @tag('network')
     def test_fetch_commands_run_without_db_lock(self):
         from django.core.management import call_command
         import io
@@ -410,6 +412,7 @@ class ManagementSecurityTests(TestCase):
         self.assertIsNone(normalize_imdb_id(""))
         self.assertIsNone(normalize_imdb_id(None))
 
+    @tag('network')
     def test_fetch_cinemeta_details(self):
         # Isle of Dogs tt5104604
         data = fetch_cinemeta_details("tt5104604")
@@ -422,6 +425,7 @@ class ManagementSecurityTests(TestCase):
         self.assertEqual(data['director'].get('name'), "Wes Anderson")
         self.assertTrue(any("Bryan Cranston" in c.get('name', '') for c in data['cast']))
 
+    @tag('network')
     def test_update_imdb_id_and_fetch_details(self):
         # Authenticate staff user to pass when MANAGE_REQUIRE_AUTH is True in CI
         self.client.login(username='admin_user', password='Password123!')
@@ -488,6 +492,7 @@ class ManagementSecurityTests(TestCase):
         # Both copies in group_key must be deleted
         self.assertEqual(Movie.objects.filter(group_key="sample_movie_dup_test").count(), 0)
 
+    @tag('network')
     def test_movie_refresh_with_imdb_id_in_payload(self):
         m = Movie.objects.create(
             title="Fight.Club.1999.1080p.mkv",
@@ -510,6 +515,7 @@ class ManagementSecurityTests(TestCase):
         self.assertIsNotNone(m.imdb_rating)
         self.assertTrue(bool(m.poster_url))
 
+    @tag('network')
     def test_unrated_movie_metadata_does_not_mutate_to_similar_title(self):
         """
         Verify that an unrated title (e.g. 'The Get Out' tt32321803) preserves its
@@ -533,6 +539,7 @@ class ManagementSecurityTests(TestCase):
         self.assertIn("Action", m.genres)
         self.assertTrue(bool(m.poster_url))
 
+    @tag('network')
     def test_detail_view_auto_enriches_missing_metadata(self):
         """
         Opening movie details automatically enriches missing metadata
@@ -954,17 +961,72 @@ class PerformanceAndSortTests(TestCase):
                 runtime=None,
             )
             if idx % 2 == 0:
-                MovieDetail.objects.create(movie=m, runtime=100 + idx)
+                MovieDetail.objects.create(
+                    movie=m,
+                    runtime=100 + idx,
+                    director={'name': 'Director Alpha'} if idx == 0 else {},
+                    cast=[{'name': 'Actor Beta'}] if idx == 2 else [],
+                )
 
-        # index: 1 Paginator COUNT + 1 SELECT+JOIN + 1 aggregate stats + 1 UNION sources = 4 queries
-        with self.assertNumQueries(4):
+        # index (DummyCache): 1 WindowCountPaginator slice + 1 aggregate stats + 1 UNION sources = 3 queries
+        with self.assertNumQueries(3):
             r_idx = self.client.get(reverse('movies_index'))
         self.assertEqual(r_idx.status_code, 200)
 
-        # search_ajax: 1 Paginator COUNT + 1 SELECT+JOIN = 2 queries regardless of card count
-        with self.assertNumQueries(2):
+        # search_ajax: 1 WindowCountPaginator slice = 1 query regardless of card count
+        with self.assertNumQueries(1):
             r_ajax = self.client.get(reverse('movies_search_ajax') + '?sort=-year')
         self.assertEqual(r_ajax.status_code, 200)
+
+        # Search still matches director/cast via MovieDetail UNION subquery
+        r_dir = self.client.get(reverse('movies_search_ajax'), {'q': 'Director Alpha'})
+        self.assertEqual(json.loads(r_dir.content)['count'], 1)
+        r_cast = self.client.get(reverse('movies_search_ajax'), {'q': 'Actor Beta'})
+        self.assertEqual(json.loads(r_cast.content)['count'], 1)
+
+        # Empty & out-of-range pagination edge cases stay safe
+        r_empty = self.client.get(reverse('movies_search_ajax'), {'q': '__no_such_title_xyz__'})
+        empty_data = json.loads(r_empty.content)
+        self.assertEqual(empty_data['count'], 0)
+        self.assertEqual(empty_data['current_page'], 1)
+
+        r_oob = self.client.get(reverse('movies_search_ajax'), {'page': '999'})
+        oob_data = json.loads(r_oob.content)
+        self.assertEqual(oob_data['count'], 10)
+        self.assertEqual(oob_data['current_page'], 1)
+
+    def test_index_summary_cache_and_invalidation(self):
+        from django.test import override_settings
+        from django.core.cache import cache
+        from movies.cache_utils import invalidate_catalog_cache
+
+        Movie.objects.create(
+            title='Cached Movie',
+            clean_title='Cached Movie',
+            year=2025,
+            file_url='http://example.com/cached.mkv',
+            source='Home NAS',
+            is_primary_copy=True,
+        )
+        locmem = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'test-summary'}}
+        with override_settings(CACHES=locmem, CATALOG_STATS_CACHE_SECONDS=60):
+            cache.clear()
+            with self.assertNumQueries(3):
+                self.client.get(reverse('movies_index'))
+            # Warm cache drops homepage load to 1 query (page slice only)
+            with self.assertNumQueries(1):
+                self.client.get(reverse('movies_index'))
+            invalidate_catalog_cache()
+            with self.assertNumQueries(3):
+                self.client.get(reverse('movies_index'))
+            cache.clear()
+
+    def test_health_endpoint(self):
+        resp = self.client.get(reverse('health_check'))
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.content)
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['database'], 'sqlite')
 
 
 

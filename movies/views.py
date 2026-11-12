@@ -1,15 +1,18 @@
 import json
 from functools import wraps
 from django.conf import settings
+from django.core.cache import cache
 from django.shortcuts import render, get_object_or_404
-from django.db.models import Q, Min, Max, F, Count
+from django.db import connection
+from django.db.models import Q, Min, Max, F, Count, Subquery
 from django.http import HttpResponse, JsonResponse
 from django.template.loader import render_to_string
-from django.core.paginator import Paginator
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.views import redirect_to_login
 from collections import defaultdict
 from .models import Movie, MovieDetail, CrawledDirectory, FailedParse, MediaSource
+from .pagination import WindowCountPaginator
+from .cache_utils import INDEX_SUMMARY_CACHE_KEY, invalidate_catalog_cache
 from .services import tmdb_service, fetch_poster_and_details
 from .utils import detect_language, fetch_imdb_rating_and_id, test_source_connection, normalize_crawl_url
 from .task_runner import task_manager
@@ -64,15 +67,16 @@ def get_filtered_queryset(request):
 
     movies = Movie.objects.all()
 
-    # 1. Search Query
+    # 1. Search Query (UNION subquery enables PostgreSQL pg_trgm GIN indexes alongside MovieDetail cast/director search)
     if q:
-        movies = movies.filter(
-            Q(clean_title__icontains=q) |
-            Q(title__icontains=q) |
-            Q(year_str__icontains=q) |
-            Q(detail__director__icontains=q) |
-            Q(detail__cast__icontains=q)
-        )
+        movie_match_q = Q(clean_title__icontains=q) | Q(title__icontains=q)
+        if q.isdigit():
+            movie_match_q |= Q(year_str__icontains=q)
+        title_matches = Movie.objects.filter(movie_match_q).order_by().values('id')
+        detail_matches = MovieDetail.objects.filter(
+            Q(director__icontains=q) | Q(cast__icontains=q)
+        ).order_by().values('movie_id')
+        movies = movies.filter(id__in=Subquery(title_matches.union(detail_matches)))
 
     # 2. Source Filter
     if source:
@@ -245,15 +249,39 @@ def _get_catalog_stats(include_manage: bool = False) -> dict:
     return Movie.objects.aggregate(**agg)
 
 
+def _get_cached_index_summary() -> dict:
+    """Fetch and briefly cache homepage catalog stats and merged source options."""
+    cached = cache.get(INDEX_SUMMARY_CACHE_KEY)
+    if cached is not None:
+        return cached
+
+    stats = _get_catalog_stats(include_manage=False)
+    # Combine distinct DB sources and configured active sources in one SQL UNION query
+    combined_sources = list(
+        Movie.objects.exclude(source='').order_by().values_list('source', flat=True)
+        .union(MediaSource.objects.filter(is_active=True).order_by().values_list('name', flat=True))
+    )
+    sources_set = set(combined_sources + ['Dhaka-Flix 14', 'Dhaka-Flix 7', 'E-Box'])
+    sources = sorted(list(sources_set), key=lambda x: x.lower())
+
+    summary = {'stats': stats, 'sources': sources}
+    ttl = getattr(settings, 'CATALOG_STATS_CACHE_SECONDS', 60)
+    if ttl > 0:
+        cache.set(INDEX_SUMMARY_CACHE_KEY, summary, ttl)
+    return summary
+
+
 def index(request):
     """Main movie listing view with rich filters, copy grouping, and pagination."""
     movies, filters, q = get_filtered_queryset(request)
     page = request.GET.get('page', 1)
 
-    paginator = Paginator(movies, 48)
+    paginator = WindowCountPaginator(movies, 48)
     movies_page = paginator.get_page(page)
 
-    stats = _get_catalog_stats(include_manage=False)
+    summary = _get_cached_index_summary()
+    stats = summary['stats']
+    sources = summary['sources']
     min_year = stats['min_year'] or 1920
     max_year = stats['max_year'] or 2026
     years = list(range(max_year, min_year - 1, -1))
@@ -263,14 +291,6 @@ def index(request):
         'Spanish', 'German', 'Italian', 'Russian', 'Turkish', 'Persian',
         'Indonesian', 'Thai', 'Tamil', 'Telugu', 'Malayalam', 'Bengali'
     ]
-
-    # Combine distinct DB sources and configured active sources in one SQL UNION query
-    combined_sources = list(
-        Movie.objects.exclude(source='').order_by().values_list('source', flat=True)
-        .union(MediaSource.objects.filter(is_active=True).order_by().values_list('name', flat=True))
-    )
-    sources_set = set(combined_sources + ['Dhaka-Flix 14', 'Dhaka-Flix 7', 'E-Box'])
-    sources = sorted(list(sources_set), key=lambda x: x.lower())
 
     resolutions = [
         ('4K', '4K UHD'),
@@ -329,7 +349,7 @@ def search_ajax(request):
     movies, filters, q = get_filtered_queryset(request)
     page = request.GET.get('page', 1)
 
-    paginator = Paginator(movies, 48)
+    paginator = WindowCountPaginator(movies, 48)
     movies_page = paginator.get_page(page)
 
     page_range = get_page_range(movies_page.number, paginator.num_pages)
@@ -357,7 +377,7 @@ def search_ajax(request):
 
 def movie_detail_ajax(request, movie_id):
     """Fetch extended movie details with authentic IMDb rating and all copies."""
-    movie = get_object_or_404(Movie, pk=movie_id)
+    movie = get_object_or_404(Movie.objects.select_related('detail'), pk=movie_id)
 
     try:
         detail = movie.detail
@@ -370,16 +390,21 @@ def movie_detail_ajax(request, movie_id):
         or (movie.imdb_id and detail and detail.imdb_id != movie.imdb_id)
     )
 
+    attempted_enrich = False
+    enrich_ok = False
     if needs_enrichment:
         from movies.services import enrich_movie_metadata
-        enrich_movie_metadata(movie, include_details=True)
-        movie.refresh_from_db()
+        attempted_enrich = True
+        enrich_ok, _ = enrich_movie_metadata(movie, include_details=True)
+        movie = Movie.objects.select_related('detail').get(pk=movie.pk)
         try:
             detail = movie.detail
         except MovieDetail.DoesNotExist:
             detail = None
+        if enrich_ok:
+            invalidate_catalog_cache()
 
-    needs_fetch = not detail or not detail.tmdb_id or (not detail.cast and not detail.director)
+    needs_fetch = (not detail or not detail.tmdb_id or (not detail.cast and not detail.director)) and not attempted_enrich
 
     search_title = movie.clean_title or movie.title
     if needs_fetch:
@@ -513,7 +538,9 @@ def movie_detail_ajax(request, movie_id):
     # Fetch all copies sharing the same group_key
     all_copies = []
     if movie.group_key:
-        copies_qs = Movie.objects.filter(group_key=movie.group_key).order_by('source', '-resolution')
+        copies_qs = Movie.objects.filter(group_key=movie.group_key).only(
+            'id', 'title', 'clean_title', 'file_url', 'source', 'resolution', 'quality', 'language'
+        ).order_by('source', '-resolution')
     else:
         copies_qs = [movie]
 
@@ -614,6 +641,7 @@ def movie_refresh_ajax(request, movie_id):
     success, res_data = enrich_movie_metadata(movie, include_details=True)
 
     if success:
+        invalidate_catalog_cache()
         return JsonResponse({
             'success': True,
             'message': f"Enriched: {movie.display_title}",
@@ -848,7 +876,7 @@ def manage_movies_api(request):
 
     qs = qs.order_by('-id')
 
-    paginator = Paginator(qs, 20)
+    paginator = WindowCountPaginator(qs, 20)
     page_obj = paginator.get_page(page)
 
     movies_data = []
@@ -896,6 +924,7 @@ def manage_movie_action_api(request, movie_id):
         from movies.services import enrich_movie_metadata
         success, res_data = enrich_movie_metadata(movie, include_details=True)
         if success:
+            invalidate_catalog_cache()
             return JsonResponse({
                 'success': True,
                 'message': f"Enriched: {movie.display_title}",
@@ -980,6 +1009,7 @@ def manage_movie_action_api(request, movie_id):
             enrich_movie_metadata(movie, include_details=True)
             movie.refresh_from_db()
 
+        invalidate_catalog_cache()
         return JsonResponse({
             'success': True,
             'message': f"Updated {movie.display_title}",
@@ -1001,6 +1031,7 @@ def manage_movie_action_api(request, movie_id):
             deleted_count, _ = Movie.objects.filter(group_key=movie.group_key).delete()
         else:
             deleted_count, _ = movie.delete()
+        invalidate_catalog_cache()
         return JsonResponse({'success': True, 'message': f"Deleted movie: {title} ({deleted_count} record(s) removed)"})
 
     return JsonResponse({'success': False, 'message': f"Unknown action: {action}"})
@@ -1055,6 +1086,7 @@ def manage_batch_action_api(request):
         if standalone_ids:
             cnt, _ = Movie.objects.filter(id__in=standalone_ids).delete()
             deleted_count += cnt
+        invalidate_catalog_cache()
         return JsonResponse({
             'success': True,
             'message': f"Deleted {deleted_count} record(s) across {len(movies)} selected movies.",
@@ -1074,6 +1106,8 @@ def manage_batch_action_api(request):
                     failed_count += 1
             except Exception:
                 failed_count += 1
+        if success_count > 0:
+            invalidate_catalog_cache()
         return JsonResponse({
             'success': True,
             'message': f"Batch enriched: {success_count} succeeded, {failed_count} failed.",
@@ -1090,6 +1124,7 @@ def manage_batch_action_api(request):
         Movie.objects.filter(id__in=ids).update(genres=genre_val)
         if group_keys:
             Movie.objects.filter(group_key__in=group_keys).update(genres=genre_val)
+        invalidate_catalog_cache()
         return JsonResponse({
             'success': True,
             'message': f"Updated genre to '{genre_val}' for {len(movies)} movies.",
@@ -1107,6 +1142,7 @@ def manage_batch_action_api(request):
         Movie.objects.filter(id__in=ids).update(year=year_int, year_str=str(year_int))
         if group_keys:
             Movie.objects.filter(group_key__in=group_keys).update(year=year_int, year_str=str(year_int))
+        invalidate_catalog_cache()
         return JsonResponse({
             'success': True,
             'message': f"Updated year to {year_int} for {len(movies)} movies.",
@@ -1205,6 +1241,7 @@ def manage_database_import(request):
                     for sql in sequence_sql:
                         cursor.execute(sql)
 
+            invalidate_catalog_cache()
             return JsonResponse({
                 'success': True,
                 'message': f'Catalog restored successfully! ({Movie.objects.count()} movies loaded). Admin access preserved.'
@@ -1255,6 +1292,7 @@ def manage_database_import(request):
         # Re-run migrations and ensure admin account credentials remain active
         call_command('migrate', '--noinput')
         call_command('ensure_admin')
+        invalidate_catalog_cache()
         return JsonResponse({'success': True, 'message': 'SQLite database restored and admin verified!'})
     except Exception as e:
         connections.close_all()
@@ -1312,6 +1350,7 @@ def manage_source_save_api(request):
             'is_active': True,
         }
     )
+    invalidate_catalog_cache()
     msg = f"Source '{name}' added successfully." if created else f"Source '{name}' updated successfully."
     return JsonResponse({
         'success': True,
@@ -1347,6 +1386,7 @@ def manage_source_delete_api(request):
         deleted, _ = MediaSource.objects.filter(name=name).delete()
 
     if deleted:
+        invalidate_catalog_cache()
         return JsonResponse({'success': True, 'message': 'Source deleted successfully.'})
     return JsonResponse({'success': False, 'message': 'Source not found.'}, status=404)
 
@@ -1369,4 +1409,15 @@ def manage_source_test_api(request):
 
     result = test_source_connection(url)
     return JsonResponse(result)
+
+
+def health_check(request):
+    """Lightweight readiness probe verifying app process and database connectivity."""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT 1')
+            cursor.fetchone()
+        return JsonResponse({'status': 'ok', 'database': connection.vendor})
+    except Exception as exc:
+        return JsonResponse({'status': 'error', 'detail': str(exc)}, status=503)
 

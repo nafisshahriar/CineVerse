@@ -265,7 +265,9 @@
       }
 
       function fetchMovies(page, pushHistory = true) {
-        if (page) currentCinemaPage = parseInt(page, 10);
+        if (page) {
+          currentCinemaPage = parseInt(page, 10) || 1;
+        }
         const extra = page ? { page: page } : (currentCinemaPage > 1 ? { page: currentCinemaPage } : {});
         const qs = buildQueryString(extra);
 
@@ -317,6 +319,7 @@
       }
 
       function updateMovies() {
+        currentCinemaPage = 1;
         fetchMovies(null, true);
       }
 
@@ -375,6 +378,7 @@
         groupCopies.checked = urlParams.get('group') !== '0';
 
         const page = urlParams.get('page');
+        currentCinemaPage = page ? (parseInt(page, 10) || 1) : 1;
         fetchMovies(page, false);
       });
 

@@ -15,10 +15,13 @@ cineVerse/
 .env.*
 !.env.example
 
-# Database (optional if self-hosting, ignore journals/locks)
+# Database (never commit local catalogs or SQLite journal/lock files)
+db.sqlite3
+*.sqlite3
 *.sqlite3-journal
 *.sqlite3-shm
 *.sqlite3-wal
+data/
 
 # Static and media
 staticfiles/

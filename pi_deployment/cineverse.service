@@ -4,10 +4,12 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=nafis
-Group=nafis
-WorkingDirectory=/home/nafis/CineVerse
-ExecStart=/bin/bash /home/nafis/CineVerse/pi_deployment/cineverse_startup.sh
+# Replace 'pi' and '/home/pi/CineVerse' with your Linux username and clone path
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/CineVerse
+EnvironmentFile=-/home/pi/CineVerse/.env
+ExecStart=/bin/bash /home/pi/CineVerse/pi_deployment/cineverse_startup.sh
 Restart=always
 RestartSec=5
 

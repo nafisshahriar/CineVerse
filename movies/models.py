@@ -33,7 +33,6 @@ class Movie(models.Model):
     class Meta:
         ordering = ['title']
         indexes = [
-            models.Index(fields=['group_key']),
             models.Index(fields=['clean_title', 'year']),
             models.Index(fields=['source', 'resolution']),
         ]

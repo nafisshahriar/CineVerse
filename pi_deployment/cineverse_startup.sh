@@ -1,35 +1,32 @@
-#!/bin/bash
-# cineverse_startup.sh
-# Adjust the path below to where your project is on the Pi
-PROJECT_DIR="/home/nafis/CineVerse"
+#!/usr/bin/env bash
+set -euo pipefail
 
-# 1. Navigate to project
-cd "$PROJECT_DIR" || exit
+# Defaults to repository root (override via CINEVERSE_DIR or systemd WorkingDirectory)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${CINEVERSE_DIR:-$(dirname "$SCRIPT_DIR")}"
+VENV_DIR="${CINEVERSE_VENV:-$PROJECT_DIR/.venv}"
 
-# 2. Wait for internet connection (simple check)
-until ping -c 1 google.com &> /dev/null; do
-    echo "Waiting for network..."
-    sleep 5
-done
+cd "$PROJECT_DIR"
 
-# 3. Pull latest code
-echo "Pulling latest code..."
-git reset --hard HEAD # CAUTION: Discards local changes to ensure clean pull
-git pull origin main
+# Optional auto-update before boot (disabled by default to preserve local changes)
+if [ "${CINEVERSE_AUTO_PULL:-false}" = "true" ]; then
+    echo "Pulling latest updates..."
+    git pull --ff-only origin main || true
+fi
 
-# 4. Activate Virtual Environment
-source .CinePi/bin/activate
+if [ -f "$VENV_DIR/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+fi
 
-# 5. Install any new dependencies
-#pip install -r requirements.txt
+python manage.py migrate --noinput
+python manage.py collectstatic --noinput
+python manage.py ensure_admin || true
 
-# 6. Apply database migrations
-#python manage.py migrate
-
-# 7. Collect static files
-#python manage.py collectstatic --noinput
-
-# 8. Start Gunicorn
-# Using full path to gunicorn from virtual environment
-echo "Starting Server..."
-exec python manage.py runserver 0.0.0.0:8000
+echo "Starting CineVerse server with Gunicorn..."
+exec gunicorn moviedash.wsgi:application \
+    --bind "0.0.0.0:${PORT:-8000}" \
+    --workers "${GUNICORN_WORKERS:-2}" \
+    --threads "${GUNICORN_THREADS:-4}" \
+    --timeout 120 \
+    --log-file -
