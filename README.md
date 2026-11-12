@@ -35,12 +35,6 @@
 | 🔒 **Protected Studio (`/manage/`)** | Public catalog browsing with staff/token-gated management actions (`MANAGE_REQUIRE_AUTH`), task progress console, and portable `.json.gz` backup/restore. |
 | 🩺 **Production Readiness** | Built-in `/health/` database connectivity probe, persistent TCP keepalives, and deterministic CI/CD. |
 
-<p align="center">
-  <img src="docs/screenshots/movie_detail_modal.png" alt="Movie Details Modal with Trailer" width="64%">
-  &nbsp;
-  <img src="docs/screenshots/mobile_responsive.png" alt="Mobile Responsive UI" width="32%">
-</p>
-
 ---
 
 ## ⚡ Quickstart (Local SQLite)
