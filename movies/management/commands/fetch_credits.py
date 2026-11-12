@@ -1,4 +1,6 @@
 from django.core.management.base import BaseCommand
+from django.db import close_old_connections
+from movies.cache_utils import invalidate_catalog_cache
 from movies.models import Movie, MovieDetail
 from movies.services import tmdb_service
 
@@ -19,8 +21,9 @@ class Command(BaseCommand):
         if movie_id:
             # Fetch for specific movie
             try:
-                movie = Movie.objects.get(pk=movie_id)
-                self._fetch_credits_for_movie(movie, force=True)
+                movie = Movie.objects.select_related('detail').get(pk=movie_id)
+                if self._fetch_credits_for_movie(movie, force=True):
+                    invalidate_catalog_cache()
             except Movie.DoesNotExist:
                 self.stdout.write(self.style.ERROR(f'Movie with ID {movie_id} not found'))
             return
@@ -28,20 +31,22 @@ class Command(BaseCommand):
         # Build queryset
         if fetch_all:
             # All movies with TMDB ID
-            movies = Movie.objects.filter(detail__tmdb_id__isnull=False)
+            movies_qs = Movie.objects.select_related('detail').filter(detail__tmdb_id__isnull=False)
             self.stdout.write(self.style.MIGRATE_HEADING('Fetching credits for ALL movies...'))
         else:
             # Only movies missing cast/director
-            movies = Movie.objects.filter(
+            movies_qs = Movie.objects.select_related('detail').filter(
                 detail__tmdb_id__isnull=False,
                 detail__cast=[]
             )
             self.stdout.write(self.style.MIGRATE_HEADING('Fetching credits for movies missing cast data...'))
         
         if limit:
-            movies = movies[:limit]
+            movies = list(movies_qs[:limit])
+        else:
+            movies = list(movies_qs)
         
-        total = movies.count()
+        total = len(movies)
         self.stdout.write(f'Found {total} movies to process')
         
         success = 0
@@ -57,6 +62,8 @@ class Command(BaseCommand):
             if i % 10 == 0:
                 self.stdout.write(f'  Progress: {i}/{total} processed...')
         
+        if success:
+            invalidate_catalog_cache()
         self.stdout.write(self.style.SUCCESS(f'\nDone! Success: {success}, Failed: {failed}'))
 
     def _fetch_credits_for_movie(self, movie: Movie, force: bool = False) -> bool:
@@ -77,6 +84,7 @@ class Command(BaseCommand):
         
         try:
             credits_data = tmdb_service._extract_credits(detail.tmdb_id)
+            close_old_connections()
             detail.cast = credits_data.get('cast', [])
             detail.director = credits_data.get('director', {})
             detail.save()

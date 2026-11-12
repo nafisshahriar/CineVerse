@@ -119,78 +119,24 @@ class Command(BaseCommand):
         self._print_summary(stats)
 
     def _fetch_details(self, stats, force, limit, delay):
-        """Fetch MovieDetail for movies that don't have one yet."""
-        if force:
-            movies_qs = Movie.objects.filter(fetched=True)
-        else:
-            movies_qs = Movie.objects.filter(fetched=True).exclude(
-                detail__tmdb_id__isnull=False
-            )
+        """Fetch MovieDetail records concurrently via fetch_missing_metadata."""
+        from django.core.management import call_command
 
+        before_count = MovieDetail.objects.filter(tmdb_id__isnull=False).count()
+        kwargs = {
+            'workers': 4,
+            'missing_details': not force,
+            'include_details': True,
+            'force': force,
+            'stdout': self.stdout,
+            'stderr': self.stderr,
+        }
         if limit:
-            movies = list(movies_qs[:limit])
-        else:
-            movies = list(movies_qs)
-        total = len(movies)
-
-        if total == 0:
-            self.stdout.write('  No movies needing TMDB details')
-            return
-
-        self.stdout.write(f'  Found {total} movies needing details')
-        tracker = ProgressTracker(total, desc="TMDB Details")
-
-        for movie in movies:
-            search_title = movie.clean_title or movie.title
-            try:
-                extended = tmdb_service.get_extended_details(
-                    search_title, movie.year_str or ''
-                )
-                if not extended:
-                    stats['details_failed'] += 1
-                    self.stdout.write(tracker.tick(False, search_title, "No TMDB match"))
-                    continue
-
-                close_old_connections()
-                detail, _ = MovieDetail.objects.get_or_create(movie=movie)
-                detail.tmdb_id = extended.get('tmdb_id')
-                detail.overview = extended.get('overview', '')
-                detail.genres = extended.get('genres', [])
-                detail.runtime = extended.get('runtime')
-                detail.backdrop_url = extended.get('backdrop_url')
-                detail.tagline = extended.get('tagline', '')
-                detail.imdb_id = extended.get('imdb_id', '')
-                detail.original_language = extended.get('original_language', '')
-                detail.budget = extended.get('budget')
-                detail.revenue = extended.get('revenue')
-                detail.production_companies = extended.get('production_companies', [])
-                detail.cast = extended.get('cast', [])
-                detail.director = extended.get('director', {})
-
-                if extended.get('release_date'):
-                    try:
-                        from datetime import datetime
-                        detail.release_date = datetime.strptime(
-                            extended['release_date'], '%Y-%m-%d'
-                        ).date()
-                    except ValueError:
-                        pass
-
-                detail.save()
-
-                # Update movie fields if newly learned
-                if extended.get('original_language') and not movie.language:
-                    movie.language = detect_language(tmdb_code=extended['original_language'])
-                    movie.save()
-
-                stats['details_fetched'] += 1
-                self.stdout.write(tracker.tick(True, movie.display_title))
-
-            except Exception as e:
-                stats['details_failed'] += 1
-                self.stdout.write(tracker.tick(False, search_title, str(e)))
-
-            time.sleep(delay)
+            kwargs['limit'] = limit
+        call_command('fetch_missing_metadata', **kwargs)
+        close_old_connections()
+        after_count = MovieDetail.objects.filter(tmdb_id__isnull=False).count()
+        stats['details_fetched'] += max(0, after_count - before_count)
 
     def _fetch_credits(self, stats, force, limit, delay):
         """Fetch cast/director for MovieDetails that are missing them."""

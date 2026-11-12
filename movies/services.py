@@ -556,27 +556,13 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
         if include_details and ext:
             try:
                 detail, _ = MovieDetail.objects.get_or_create(movie=movie)
-                if tmdb_id:
-                    detail.tmdb_id = tmdb_id
-                detail.imdb_id = canonical_imdb_id or ''
-                detail.imdb_rating = imdb_rating
-                detail.overview = ext.get('overview', '')
-                detail.genres = ext.get('genres', [])
-                detail.runtime = ext.get('runtime')
-                detail.backdrop_url = ext.get('backdrop_url') or backdrop_url
-                detail.tagline = ext.get('tagline', '')
-                detail.cast = ext.get('cast', [])
-                detail.director = ext.get('director', {})
-                detail.original_language = ext.get('original_language', '')
-                if ext.get('trailer_key'):
-                    detail.trailer_key = ext.get('trailer_key')
-                    detail.trailer_url = ext.get('trailer_url')
-                if official_year and ext.get('release_date'):
-                    try:
-                        from datetime import datetime
-                        detail.release_date = datetime.strptime(str(ext['release_date'])[:10], '%Y-%m-%d').date()
-                    except Exception:
-                        pass
+                for k, v in build_movie_detail_fields(
+                    ext,
+                    fallback_backdrop=backdrop_url,
+                    canonical_imdb_id=canonical_imdb_id,
+                    imdb_rating=imdb_rating,
+                ).items():
+                    setattr(detail, k, v)
                 detail.save()
             except Exception:
                 pass
@@ -603,3 +589,180 @@ def enrich_movie_metadata(movie, include_details: bool = True) -> tuple[bool, di
         'popularity': movie.popularity,
         'metadata_status': movie.metadata_status,
     }
+
+
+def build_movie_detail_fields(
+    ext: dict,
+    fallback_backdrop: Optional[str] = None,
+    canonical_imdb_id: Optional[str] = None,
+    imdb_rating: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Map TMDB/extended metadata dict into MovieDetail model field values."""
+    fields: Dict[str, Any] = {
+        'overview': ext.get('overview', '') or '',
+        'genres': ext.get('genres', []) or [],
+        'runtime': ext.get('runtime'),
+        'backdrop_url': ext.get('backdrop_url') or fallback_backdrop,
+        'tagline': (ext.get('tagline') or '')[:512],
+        'cast': ext.get('cast', []) or [],
+        'director': ext.get('director', {}) or {},
+        'original_language': (ext.get('original_language') or '')[:10],
+    }
+    if ext.get('tmdb_id'):
+        fields['tmdb_id'] = ext['tmdb_id']
+    imdb_val = canonical_imdb_id if canonical_imdb_id is not None else ext.get('imdb_id')
+    if imdb_val is not None:
+        fields['imdb_id'] = (imdb_val or '')[:20]
+    rating_val = imdb_rating if imdb_rating is not None else ext.get('imdb_rating')
+    if rating_val is not None:
+        fields['imdb_rating'] = rating_val
+    if ext.get('trailer_key'):
+        fields['trailer_key'] = str(ext['trailer_key'])[:64]
+        fields['trailer_url'] = (ext.get('trailer_url') or '')[:512]
+    if ext.get('release_date'):
+        try:
+            fields['release_date'] = datetime.strptime(str(ext['release_date'])[:10], '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            pass
+    return fields
+
+
+def reconcile_copy_groups(group_keys=None, stop_check=None, log_fn=None) -> Dict[str, int]:
+    """Recalculate primary copy flags and propagate group metadata across copies.
+
+    When ``group_keys`` is provided, only inspects movies matching those keys (1-2
+    queries after a crawl). When ``None``, scans the full catalog for regrouping.
+    """
+    import os
+    from urllib.parse import unquote
+    from django.db import close_old_connections
+    from movies.models import Movie
+    from movies.utils import parse_movie_info
+
+    full_scan = group_keys is None
+    if not full_scan:
+        clean_keys = {k for k in group_keys if k}
+        if not clean_keys:
+            return {'groups': 0, 'updated': 0}
+        movies = list(Movie.objects.filter(group_key__in=clean_keys))
+    else:
+        if log_fn:
+            log_fn("Analyzing and regrouping movies across all servers...")
+        movies = list(Movie.objects.all())
+
+    total = len(movies)
+    if total == 0:
+        return {'groups': 0, 'updated': 0}
+
+    if full_scan and log_fn:
+        log_fn(f"Total files in catalog: {total}")
+
+    res_priority = {'4k': 4, '1080p': 3, '720p': 2, '480p': 1}
+    shared_fields = (
+        'clean_title', 'poster_url', 'imdb_id', 'imdb_rating', 'genres',
+        'runtime', 'popularity', 'vote_average', 'vote_count',
+    )
+
+    groups: Dict[str, List[Any]] = {}
+    changed_field_names = set()
+    dirty_ids = set()
+
+    for idx, m in enumerate(movies):
+        if stop_check and stop_check():
+            if log_fn:
+                log_fn("[STOPPED] Regrouping cancelled by user.")
+            return {'groups': len(groups), 'updated': 0, 'stopped': True}
+
+        if full_scan and log_fn and idx % 1000 == 0:
+            pct = round((idx / total) * 100, 1)
+            log_fn(f"[{idx}/{total} ({pct}%)] Grouping movies...")
+
+        if full_scan and (not m.clean_title or not m.group_key or not m.resolution or not m.source):
+            file_name = os.path.basename(unquote(m.file_url or ''))
+            dir_name = os.path.basename(unquote(m.directory_url or '').rstrip('/\\'))
+            info = parse_movie_info(dir_name or file_name, file_name)
+            if not m.clean_title:
+                m.clean_title = (info.get('clean_title') or m.title)[:512]
+                changed_field_names.add('clean_title')
+                dirty_ids.add(m.id)
+            if not m.group_key:
+                m.group_key = (info.get('group_key') or '')[:512]
+                changed_field_names.add('group_key')
+                dirty_ids.add(m.id)
+            if not m.resolution and info.get('resolution'):
+                m.resolution = info['resolution'][:20]
+                changed_field_names.add('resolution')
+                dirty_ids.add(m.id)
+            if not m.source and info.get('source'):
+                m.source = info['source'][:64]
+                changed_field_names.add('source')
+                dirty_ids.add(m.id)
+
+        key = m.group_key or f"{(m.clean_title or m.title).lower()}:::{m.year or ''}"
+        groups.setdefault(key, []).append(m)
+
+    if full_scan and log_fn:
+        log_fn(f"Found {len(groups)} unique movie groups across {total} files.")
+        log_fn("Assigning primary copies (prioritizing 4K > 1080P > 720P)...")
+
+    movies_to_update = []
+    for copies in groups.values():
+        # Propagate non-empty shared metadata within the group so promoted copies keep posters/ratings
+        shared_best = {}
+        for field in shared_fields:
+            for c in copies:
+                val = getattr(c, field)
+                if val not in (None, ''):
+                    shared_best[field] = val
+                    break
+
+        best_fetched = any(c.fetched for c in copies)
+
+        copies.sort(
+            key=lambda c: (
+                res_priority.get((c.resolution or '').lower(), 0),
+                1 if c.poster_url else 0,
+                1 if c.fetched else 0,
+                1 if c.source else 0,
+                -c.id,
+            ),
+            reverse=True,
+        )
+
+        for i, c in enumerate(copies):
+            dirty = c.id in dirty_ids
+            should_be_primary = (i == 0)
+            if c.is_primary_copy != should_be_primary:
+                c.is_primary_copy = should_be_primary
+                changed_field_names.add('is_primary_copy')
+                dirty = True
+
+            if len(copies) > 1:
+                for field, best_val in shared_best.items():
+                    if getattr(c, field) in (None, ''):
+                        setattr(c, field, best_val)
+                        changed_field_names.add(field)
+                        dirty = True
+                if best_fetched and not c.fetched:
+                    c.fetched = True
+                    c.metadata_status = 'ok'
+                    changed_field_names.update(['fetched', 'metadata_status'])
+                    dirty = True
+
+            if dirty:
+                movies_to_update.append(c)
+
+    if movies_to_update and changed_field_names:
+        if log_fn:
+            log_fn(f"Updating {len(movies_to_update)} movie copy records in database...")
+        fields_list = sorted(changed_field_names)
+        for i in range(0, len(movies_to_update), 500):
+            chunk = movies_to_update[i:i + 500]
+            close_old_connections()
+            Movie.objects.bulk_update(chunk, fields_list)
+        if log_fn:
+            log_fn(f"[OK] Successfully reconciled primary copy flags for {len(movies_to_update)} records.")
+    elif log_fn:
+        log_fn("[OK] All copy groups are already optimal and up-to-date!")
+
+    return {'groups': len(groups), 'updated': len(movies_to_update)}

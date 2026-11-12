@@ -324,8 +324,16 @@ class BackgroundTaskManager:
             workers = int(params.get('workers', 4)) if params.get('workers') else 4
             force = bool(params.get('force', False))
             include_details = bool(params.get('include_details', False))
+            missing_details = bool(params.get('missing_details', False))
 
-            kwargs = {'workers': workers, 'force': force, 'include_details': include_details, 'stdout': out_stream, 'stderr': out_stream}
+            kwargs = {
+                'workers': workers,
+                'force': force,
+                'include_details': include_details,
+                'missing_details': missing_details,
+                'stdout': out_stream,
+                'stderr': out_stream,
+            }
             if limit and limit > 0:
                 kwargs['limit'] = limit
             call_command('fetch_missing_metadata', **kwargs)
@@ -396,75 +404,13 @@ class BackgroundTaskManager:
 
     def _recalculate_copy_groups(self, stream):
         """Re-evaluates clean titles, group keys, and primary copies across the catalog."""
-        from movies.models import Movie
-        from movies.utils import parse_movie_info, clean_title_for_search
-        import os
-        from urllib.parse import unquote
+        from movies.services import reconcile_copy_groups
 
-        stream.write("Analyzing and regrouping movies across all servers...")
-        movies = list(Movie.objects.all())
-        total = len(movies)
-        stream.write(f"Total files in catalog: {total}")
-
-        # Group copies by group_key
-        groups = {}
-        for idx, m in enumerate(movies):
-            if self.stop_requested.is_set():
-                stream.write("[STOPPED] Regrouping cancelled by user.")
-                return
-
-            if idx % 1000 == 0:
-                pct = round((idx / total) * 100, 1)
-                stream.write(f"[{idx}/{total} ({pct}%)] Grouping movies...")
-
-            file_name = os.path.basename(unquote(m.file_url or ''))
-            dir_name = os.path.basename(unquote(m.directory_url or '').rstrip('/\\'))
-            info = parse_movie_info(dir_name or file_name, file_name)
-
-            if not m.clean_title:
-                m.clean_title = info.get('clean_title') or m.title
-            if not m.group_key:
-                m.group_key = info.get('group_key', '')
-            if not m.resolution and info.get('resolution'):
-                m.resolution = info.get('resolution')
-            if not m.source and info.get('source'):
-                m.source = info.get('source')
-
-            key = m.group_key or f"{m.clean_title.lower()}:::{m.year or ''}"
-            groups.setdefault(key, []).append(m)
-
-        stream.write(f"Found {len(groups)} unique movie groups across {total} files.")
-        stream.write("Assigning primary copies (prioritizing 4K > 1080P > 720P)...")
-
-        res_priority = {'4k': 4, '1080p': 3, '720p': 2, '480p': 1}
-        movies_to_update = []
-
-        for key, copies in groups.items():
-            # Sort copies by resolution score desc, then id
-            copies.sort(
-                key=lambda c: (
-                    res_priority.get((c.resolution or '').lower(), 0),
-                    1 if c.source else 0,
-                    -c.id
-                ),
-                reverse=True
-            )
-            # First is primary, rest are secondary
-            for i, c in enumerate(copies):
-                should_be_primary = (i == 0)
-                if c.is_primary_copy != should_be_primary:
-                    c.is_primary_copy = should_be_primary
-                    movies_to_update.append(c)
-
-        if movies_to_update:
-            stream.write(f"Updating {len(movies_to_update)} movie copy flags in database...")
-            # Batch update in chunks of 500
-            for i in range(0, len(movies_to_update), 500):
-                chunk = movies_to_update[i:i+500]
-                Movie.objects.bulk_update(chunk, ['is_primary_copy', 'clean_title', 'group_key', 'resolution', 'source'])
-            stream.write(f"[OK] Successfully updated primary copy flags for {len(movies_to_update)} movies.")
-        else:
-            stream.write("[OK] All copy groups are already optimal and up-to-date!")
+        reconcile_copy_groups(
+            group_keys=None,
+            stop_check=self.is_stop_requested,
+            log_fn=stream.write,
+        )
 
 
 task_manager = BackgroundTaskManager()

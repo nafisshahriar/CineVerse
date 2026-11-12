@@ -131,7 +131,7 @@ CineVerse includes [`render.yaml`](render.yaml), [`build.sh`](build.sh), [`Procf
    ```
 2. On **[Render.com](https://render.com/)**, create a **Web Service** (or Blueprint from `render.yaml`) pointing to your fork:
    - **Build Command:** `./build.sh`
-   - **Start Command:** `gunicorn moviedash.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 --log-file -`
+   - **Start Command:** `gunicorn moviedash.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120 --log-file -`
    - **Health Check Path:** `/health/`
 3. Add environment variables (`DJANGO_SECRET_KEY`, `DJANGO_DEBUG=False`, `MANAGE_REQUIRE_AUTH=True`, `DATABASE_URL`, `DJANGO_SUPERUSER_USERNAME`, `DJANGO_SUPERUSER_PASSWORD`, `TMDB_API_KEY`).
 
@@ -196,8 +196,8 @@ python manage.py crawl_h5ai --url "http://your-nas/movies/" --source "Home NAS"
 # Full crawl + metadata + detail enrichment pipeline
 python manage.py update_all --url "http://your-nas/movies/"
 
-# Fetch missing posters & TMDB details in parallel
-python manage.py fetch_missing_metadata --workers 4 --include-details
+# Fetch missing posters & TMDB details in parallel (add --missing-details for movies lacking MovieDetail)
+python manage.py fetch_missing_metadata --workers 4 --missing-details
 
 # Multi-threaded IMDb ratings & genre sync
 python manage.py fetch_imdb_ratings --all --workers 8

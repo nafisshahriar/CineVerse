@@ -8,7 +8,7 @@ from movies.utils import (
     crawl_h5ai_recursive, parse_movie_info, extract_last_modified_from_text,
     find_media_in_directory, MEDIA_EXTS, IGNORED_DIRS, detect_language, detect_source
 )
-from movies.services import fetch_poster_and_details
+from movies.services import fetch_poster_and_details, reconcile_copy_groups
 from datetime import timedelta
 import requests
 import os
@@ -25,6 +25,7 @@ class Command(BaseCommand):
         self._pending_dir_updates = {}
         self._failed_urls = None
         self._movie_cache = None
+        self._touched_group_keys = set()
 
     def add_arguments(self, parser):
         parser.add_argument('--url', required=True, help='Root H5AI URL to crawl')
@@ -150,6 +151,12 @@ class Command(BaseCommand):
             raise CommandError(str(e))
         finally:
             self._flush_dir_cache_updates()
+            if self._touched_group_keys:
+                reconcile_res = reconcile_copy_groups(group_keys=self._touched_group_keys)
+                if reconcile_res.get('updated'):
+                    self.stdout.write(self.style.NOTICE(
+                        f"Reconciled {reconcile_res['updated']} primary/copy record(s) across {reconcile_res['groups']} group(s)."
+                    ))
             if stats['new_movies'] or stats['updated_movies'] or stats['metadata_fetched'] or custom_source:
                 invalidate_catalog_cache()
 
@@ -159,6 +166,7 @@ class Command(BaseCommand):
         """Preload catalog skip tables once so remote Postgres crawls avoid per-item round-trips."""
         close_old_connections()
         self._pending_dir_updates = {}
+        self._touched_group_keys = set()
         self._dir_cache = {
             url: (remote_modified, movie_count, last_crawled)
             for url, remote_modified, movie_count, last_crawled
@@ -403,6 +411,9 @@ class Command(BaseCommand):
             if changed_fields:
                 movie.save()
 
+        if movie.group_key and (is_new or 'group_key' in (changed_fields if not is_new else [])):
+            self._touched_group_keys.add(movie.group_key)
+
         self._remember_movie(movie)
         return movie, is_new
 
@@ -581,6 +592,8 @@ class Command(BaseCommand):
             movie.save()
             self.stdout.write(self.style.ERROR(f"Error fetching {movie.display_title}: {e}"))
         finally:
+            if movie.group_key:
+                self._touched_group_keys.add(movie.group_key)
             self._remember_movie(movie)
 
     def _retry_failed_parses(self, stats: dict, force: bool, timeout: int, custom_source: str = ''):

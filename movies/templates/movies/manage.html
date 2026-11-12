@@ -1202,6 +1202,10 @@
               <span>Also fetch extended details (director, cast, runtime, backdrop)</span>
             </label>
             <label class="checkbox-label">
+              <input type="checkbox" id="postersMissingDetails">
+              <span>Include movies that already have posters but lack cast/trailers/overview</span>
+            </label>
+            <label class="checkbox-label">
               <input type="checkbox" id="postersForce">
               <span>Force re-fetch even for movies that already have posters</span>
             </label>
@@ -2034,12 +2038,14 @@
       const workers = document.getElementById('postersWorkers').value;
       const force = document.getElementById('postersForce').checked;
       const details = document.getElementById('postersIncludeDetails').checked;
+      const missingDetails = document.getElementById('postersMissingDetails').checked;
 
       triggerTask('fetch_posters', {
         limit: limit === '0' ? null : parseInt(limit, 10),
         workers: parseInt(workers, 10),
         force: force,
-        include_details: details,
+        include_details: details || missingDetails,
+        missing_details: missingDetails,
       });
     }
 

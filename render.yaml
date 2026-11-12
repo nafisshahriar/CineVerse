@@ -5,7 +5,7 @@ services:
     plan: free
     healthCheckPath: /health/
     buildCommand: ./build.sh
-    startCommand: gunicorn moviedash.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 --log-file -
+    startCommand: gunicorn moviedash.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120 --log-file -
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.3

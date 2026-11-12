@@ -1151,6 +1151,142 @@ class PerformanceAndSortTests(TestCase):
             m.refresh_from_db()
             self.assertEqual(m.genres, 'Action, Sci-Fi')
 
+    def test_reconcile_copy_groups_deduplicates_and_preserves_metadata(self):
+        from movies.services import reconcile_copy_groups
+
+        m_1080 = Movie.objects.create(
+            title='Arrival 2016 1080p.mkv',
+            clean_title='Arrival',
+            year=2016,
+            resolution='1080P',
+            source='Server A',
+            file_url='http://nas-a.local/Arrival.2016.1080p.mkv',
+            group_key='arrival_2016',
+            is_primary_copy=True,
+            fetched=True,
+            metadata_status='ok',
+            poster_url='https://image.tmdb.org/t/p/w500/arrival.jpg',
+            imdb_id='tt2543164',
+            imdb_rating=7.9,
+            genres='Drama, Sci-Fi',
+        )
+        m_4k = Movie.objects.create(
+            title='Arrival 2016 4K.mkv',
+            clean_title='Arrival',
+            year=2016,
+            resolution='4K',
+            source='Server B',
+            file_url='http://nas-b.local/Arrival.2016.4K.mkv',
+            group_key='arrival_2016',
+            is_primary_copy=True,
+            fetched=False,
+            metadata_status='missing',
+        )
+        unrelated = Movie.objects.create(
+            title='Unrelated 2020.mkv',
+            clean_title='Unrelated',
+            year=2020,
+            file_url='http://nas-a.local/Unrelated.2020.mkv',
+            group_key='unrelated_2020',
+            is_primary_copy=True,
+        )
+
+        res = reconcile_copy_groups(group_keys={'arrival_2016'})
+        self.assertEqual(res['groups'], 1)
+        m_1080.refresh_from_db()
+        m_4k.refresh_from_db()
+        unrelated.refresh_from_db()
+
+        self.assertFalse(m_1080.is_primary_copy)
+        self.assertTrue(m_4k.is_primary_copy)
+        self.assertEqual(m_4k.poster_url, 'https://image.tmdb.org/t/p/w500/arrival.jpg')
+        self.assertEqual(m_4k.imdb_id, 'tt2543164')
+        self.assertEqual(m_4k.imdb_rating, 7.9)
+        self.assertTrue(m_4k.fetched)
+        self.assertTrue(unrelated.is_primary_copy)
+
+    def test_crawl_h5ai_auto_reconciles_duplicate_server_copies(self):
+        from unittest.mock import patch
+        from io import StringIO
+        from django.core.management import call_command
+
+        existing = Movie.objects.create(
+            title='Interstellar 2014 1080p.mkv',
+            clean_title='Interstellar',
+            year=2014,
+            resolution='1080P',
+            source='Server A',
+            file_url='http://nas-a.local/Interstellar.2014.1080p.mkv',
+            group_key='interstellar:::2014',
+            is_primary_copy=True,
+            fetched=True,
+            metadata_status='ok',
+            poster_url='https://image.tmdb.org/t/p/w500/interstellar.jpg',
+        )
+        fake_items = [{
+            'name': 'Interstellar.2014.4K.mkv',
+            'url': 'http://nas-b.local/movies/Interstellar.2014.4K.mkv',
+            'is_dir': False,
+            'is_skipped': False,
+            'directory_url': 'http://nas-b.local/movies/',
+            'dir_name': '',
+            'raw': '',
+        }]
+        with patch('movies.management.commands.crawl_h5ai.crawl_h5ai_recursive', return_value=iter(fake_items)), \
+             patch('movies.management.commands.crawl_h5ai.fetch_poster_and_details', return_value={'poster_url': 'https://image.tmdb.org/t/p/w500/interstellar.jpg', 'popularity': 90.0}):
+            call_command('crawl_h5ai', url='http://nas-b.local/movies/', source='Server B', stdout=StringIO())
+
+        existing.refresh_from_db()
+        new_4k = Movie.objects.get(file_url='http://nas-b.local/movies/Interstellar.2014.4K.mkv')
+        self.assertEqual(new_4k.group_key, 'interstellar:::2014')
+        self.assertTrue(new_4k.is_primary_copy)
+        self.assertFalse(existing.is_primary_copy)
+        self.assertEqual(Movie.objects.filter(group_key='interstellar:::2014', is_primary_copy=True).count(), 1)
+
+    def test_fetch_missing_metadata_missing_details_backfills_already_posted_movies(self):
+        from unittest.mock import patch
+        from io import StringIO
+        from django.core.management import call_command
+
+        m = Movie.objects.create(
+            title='Blade Runner 2049 (2017)',
+            clean_title='Blade Runner 2049',
+            year=2017,
+            file_url='http://example.com/br2049.mkv',
+            poster_url='https://image.tmdb.org/t/p/w500/br2049.jpg',
+            fetched=True,
+            metadata_status='ok',
+            is_primary_copy=True,
+        )
+        fake_ext = {
+            'tmdb_id': 335984,
+            'overview': 'Young Blade Runner K discovers a long-buried secret.',
+            'genres': ['Science Fiction', 'Drama'],
+            'runtime': 164,
+            'backdrop_url': 'https://image.tmdb.org/t/p/w1280/bg.jpg',
+            'tagline': 'The key to the future is finally unearthed.',
+            'imdb_id': 'tt1856101',
+            'original_language': 'en',
+            'release_date': '2017-10-06',
+            'trailer_key': 'gCcx85zbxz4',
+            'trailer_url': 'https://www.youtube.com/watch?v=gCcx85zbxz4',
+            'cast': [{'name': 'Ryan Gosling'}],
+            'director': {'name': 'Denis Villeneuve'},
+        }
+        with patch.dict('os.environ', {'TMDB_API_KEY': 'dummy_key'}), \
+             patch('movies.management.commands.fetch_missing_metadata.tmdb_service.get_extended_details', return_value=fake_ext):
+            call_command('fetch_missing_metadata', missing_details=True, workers=1, stdout=StringIO())
+
+        m.refresh_from_db()
+        detail = MovieDetail.objects.get(movie=m)
+        self.assertEqual(detail.tmdb_id, 335984)
+        self.assertEqual(detail.trailer_key, 'gCcx85zbxz4')
+        self.assertEqual(detail.director, {'name': 'Denis Villeneuve'})
+        self.assertEqual(str(detail.release_date), '2017-10-06')
+        self.assertEqual(m.runtime, 164)
+        self.assertEqual(m.imdb_id, 'tt1856101')
+
+
 
 
 

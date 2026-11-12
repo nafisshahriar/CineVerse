@@ -8,7 +8,7 @@ import re
 import time
 from movies.cache_utils import invalidate_catalog_cache
 from movies.models import Movie, MovieDetail
-from movies.services import tmdb_service
+from movies.services import tmdb_service, build_movie_detail_fields
 from movies.utils import ProgressTracker, clean_title_for_search, TMDB_GENRES
 from movies.task_runner import is_task_stopped
 
@@ -21,13 +21,15 @@ class Command(BaseCommand):
         parser.add_argument('--workers', type=int, default=4, help='Concurrent worker threads (default: 4)')
         parser.add_argument('--force', action='store_true', help='Re-fetch even if movie already has a poster')
         parser.add_argument('--include-details', action='store_true', help='Fetch extended details (cast, director, runtime, backdrop)')
+        parser.add_argument('--missing-details', action='store_true', help='Also process movies that already have posters but lack MovieDetail rows')
         parser.add_argument('--all', action='store_true', help='Process all movies missing posters')
 
     def handle(self, *args, **options):
         limit = options['limit']
         workers = options['workers'] or 4
         force = options['force']
-        include_details = options['include_details']
+        missing_details = options.get('missing_details', False)
+        include_details = options['include_details'] or missing_details
 
         api_key = os.getenv('TMDB_API_KEY')
         if not api_key:
@@ -36,7 +38,13 @@ class Command(BaseCommand):
 
         qs = Movie.objects.filter(is_primary_copy=True)
         if not force:
-            qs = qs.filter(Q(poster_url__isnull=True) | Q(poster_url='') | Q(metadata_status='missing'))
+            missing_base_q = Q(poster_url__isnull=True) | Q(poster_url='') | Q(metadata_status='missing')
+            if missing_details:
+                qs = qs.filter(
+                    missing_base_q | Q(detail__isnull=True) | Q(detail__tmdb_id__isnull=True)
+                ).distinct()
+            else:
+                qs = qs.filter(missing_base_q)
 
         # Process movies ordered by id desc
         qs = qs.order_by('-id')
@@ -61,7 +69,10 @@ class Command(BaseCommand):
                 'year': m.year,
                 'genres': m.genres,
                 'imdb_id': m.imdb_id,
+                'runtime': m.runtime,
                 'group_key': m.group_key,
+                'has_poster': bool(m.poster_url),
+                'metadata_status': m.metadata_status,
             }
             for m in movies
         ]
@@ -85,6 +96,41 @@ class Command(BaseCommand):
 
             from movies.utils import normalize_imdb_id, fetch_cinemeta_details
             clean_imdb = normalize_imdb_id(item.get('imdb_id'))
+            needs_base_meta = force or not item.get('has_poster') or item.get('metadata_status') == 'missing'
+
+            if not needs_base_meta and include_details:
+                ext = None
+                try:
+                    ext = tmdb_service.get_extended_details(clean_t, year_str, imdb_id=clean_imdb or '')
+                except Exception:
+                    ext = None
+                if not ext:
+                    return {
+                        'id': item['id'],
+                        'success': False,
+                        'mark_failed': False,
+                        'title': item['display_title'],
+                        'extra': 'No TMDB details found',
+                        'cancelled': False,
+                    }
+                detail_data = build_movie_detail_fields(ext)
+                update_data = {}
+                if ext.get('runtime') and not item.get('runtime'):
+                    update_data['runtime'] = ext['runtime']
+                if ext.get('imdb_id') and not clean_imdb:
+                    update_data['imdb_id'] = str(ext['imdb_id'])[:20]
+                if ext.get('genres') and not item.get('genres'):
+                    update_data['genres'] = ', '.join(ext['genres'])[:255]
+                return {
+                    'id': item['id'],
+                    'group_key': item['group_key'],
+                    'success': True,
+                    'update_data': update_data,
+                    'detail_data': detail_data,
+                    'title': item['display_title'],
+                    'extra': 'Extended details synced',
+                    'cancelled': False,
+                }
 
             res = None
             if clean_imdb:
@@ -186,16 +232,15 @@ class Command(BaseCommand):
                 try:
                     ext = tmdb_service.get_extended_details(clean_t, year_str, imdb_id=clean_imdb or '')
                     if ext:
-                        detail_data = {
-                            'tmdb_id': tmdb_id,
-                            'overview': ext.get('overview', ''),
-                            'genres': ext.get('genres', []),
-                            'runtime': ext.get('runtime'),
-                            'backdrop_url': ext.get('backdrop_url') or backdrop_url,
-                            'tagline': ext.get('tagline', ''),
-                            'cast': ext.get('cast', []),
-                            'director': ext.get('director', {}),
-                        }
+                        ext_payload = dict(ext)
+                        ext_payload.setdefault('tmdb_id', tmdb_id)
+                        detail_data = build_movie_detail_fields(
+                            ext_payload, fallback_backdrop=backdrop_url
+                        )
+                        if ext.get('runtime') and not item.get('runtime'):
+                            update_data['runtime'] = ext['runtime']
+                        if ext.get('imdb_id') and not clean_imdb:
+                            update_data['imdb_id'] = str(ext['imdb_id'])[:20]
                 except Exception:
                     pass
 
@@ -297,15 +342,17 @@ class Command(BaseCommand):
             for item in items:
                 m_id = item['id']
                 if not item.get('success'):
-                    Movie.objects.filter(id=m_id).update(metadata_status='failed')
+                    if item.get('mark_failed', True):
+                        Movie.objects.filter(id=m_id).update(metadata_status='failed')
                     continue
 
                 update_data = item.get('update_data', {})
-                group_key = item.get('group_key')
-                if group_key:
-                    Movie.objects.filter(group_key=group_key).update(**update_data)
-                else:
-                    Movie.objects.filter(id=m_id).update(**update_data)
+                if update_data:
+                    group_key = item.get('group_key')
+                    if group_key:
+                        Movie.objects.filter(group_key=group_key).update(**update_data)
+                    else:
+                        Movie.objects.filter(id=m_id).update(**update_data)
 
                 detail_data = item.get('detail_data')
                 if detail_data:

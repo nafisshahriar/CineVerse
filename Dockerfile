@@ -22,4 +22,4 @@ COPY . /app/
 EXPOSE 8000
 
 # Default entrypoint: run migrations, ensure admin account, collect static, and start gunicorn
-CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py ensure_admin && python manage.py collectstatic --noinput && gunicorn moviedash.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 3 --timeout 120"]
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py ensure_admin && python manage.py collectstatic --noinput && gunicorn moviedash.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 1 --threads 8 --timeout 120"]
