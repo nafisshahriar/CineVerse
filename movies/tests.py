@@ -904,3 +904,67 @@ class PushLocalToOnlineCommandTests(unittest.TestCase):
             self.assertEqual(detail_count, 1)
 
 
+class PerformanceAndSortTests(TestCase):
+    """Test deterministic Newest First sorting and bounded query count (no N+1)."""
+
+    def test_newest_sort_breaks_year_ties_deterministically(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        now = timezone.now()
+        m_older_same_year = Movie.objects.create(
+            title='Older Same Year',
+            clean_title='Older Same Year',
+            year=2026,
+            file_url='http://example.com/2026-a.mkv',
+            is_primary_copy=True,
+            last_crawled=now - timedelta(days=5),
+        )
+        m_newer_same_year = Movie.objects.create(
+            title='Newer Same Year',
+            clean_title='Newer Same Year',
+            year=2026,
+            file_url='http://example.com/2026-b.mkv',
+            is_primary_copy=True,
+            last_crawled=now - timedelta(hours=1),
+        )
+        m_prev_year = Movie.objects.create(
+            title='Previous Year',
+            clean_title='Previous Year',
+            year=2025,
+            file_url='http://example.com/2025.mkv',
+            is_primary_copy=True,
+            last_crawled=now,
+        )
+
+        resp = self.client.get(reverse('movies_index') + '?sort=-year')
+        self.assertEqual(resp.status_code, 200)
+        ordered_ids = [m.id for m in resp.context['movies']]
+        self.assertEqual(ordered_ids, [m_newer_same_year.id, m_older_same_year.id, m_prev_year.id])
+
+    def test_index_and_search_avoid_n_plus_one_queries(self):
+        for idx in range(10):
+            m = Movie.objects.create(
+                title=f'Film {idx}',
+                clean_title=f'Film {idx}',
+                year=2024,
+                file_url=f'http://example.com/film-{idx}.mkv',
+                source='Home NAS',
+                is_primary_copy=True,
+                runtime=None,
+            )
+            if idx % 2 == 0:
+                MovieDetail.objects.create(movie=m, runtime=100 + idx)
+
+        # index: 1 Paginator COUNT + 1 SELECT+JOIN + 1 aggregate stats + 1 UNION sources = 4 queries
+        with self.assertNumQueries(4):
+            r_idx = self.client.get(reverse('movies_index'))
+        self.assertEqual(r_idx.status_code, 200)
+
+        # search_ajax: 1 Paginator COUNT + 1 SELECT+JOIN = 2 queries regardless of card count
+        with self.assertNumQueries(2):
+            r_ajax = self.client.get(reverse('movies_search_ajax') + '?sort=-year')
+        self.assertEqual(r_ajax.status_code, 200)
+
+
+

@@ -146,33 +146,49 @@ def get_filtered_queryset(request):
     elif missing == 'genres':
         movies = movies.filter(Q(genres__isnull=True) | Q(genres=''))
 
-    # 11. Reliable Sorting (IMDb Rating first for highest rated)
+    # 11. Reliable Sorting with deterministic tiebreakers across SQLite and PostgreSQL
     if sort_by == 'rating':
         # Highest Rated: movies with real high IMDb ratings, then high vote count
         movies = movies.order_by(
             F('imdb_rating').desc(nulls_last=True),
             F('vote_count').desc(nulls_last=True),
-            F('vote_average').desc(nulls_last=True)
+            F('vote_average').desc(nulls_last=True),
+            '-id',
         )
     elif sort_by == '-rating':
         movies = movies.order_by(
             F('imdb_rating').asc(nulls_last=True),
-            F('vote_average').asc(nulls_last=True)
+            F('vote_average').asc(nulls_last=True),
+            'id',
         )
     elif sort_by == 'popularity':
-        movies = movies.order_by(F('popularity').desc(nulls_last=True))
+        movies = movies.order_by(F('popularity').desc(nulls_last=True), '-id')
     elif sort_by == 'votes':
-        movies = movies.order_by(F('vote_count').desc(nulls_last=True))
+        movies = movies.order_by(F('vote_count').desc(nulls_last=True), '-id')
     elif sort_by == '-year':
-        movies = movies.order_by(F('year').desc(nulls_last=True))
+        movies = movies.order_by(
+            F('year').desc(nulls_last=True),
+            F('last_crawled').desc(nulls_last=True),
+            '-id',
+        )
     elif sort_by == 'year':
-        movies = movies.order_by(F('year').asc(nulls_last=True))
+        movies = movies.order_by(F('year').asc(nulls_last=True), 'id')
     elif sort_by == 'title':
-        movies = movies.order_by(F('clean_title').asc(nulls_last=True))
+        movies = movies.order_by(F('clean_title').asc(nulls_last=True), 'id')
     elif sort_by == '-title':
-        movies = movies.order_by(F('clean_title').desc(nulls_last=True))
+        movies = movies.order_by(F('clean_title').desc(nulls_last=True), '-id')
     else:
-        movies = movies.order_by(F('popularity').desc(nulls_last=True))
+        movies = movies.order_by(F('popularity').desc(nulls_last=True), '-id')
+
+    # Preload detail__runtime in the same JOIN to eliminate N+1 queries per movie card
+    movies = movies.select_related('detail').only(
+        'id', 'title', 'clean_title', 'year', 'year_str', 'poster_url',
+        'file_url', 'directory_url', 'source', 'resolution', 'quality',
+        'language', 'genres', 'group_key', 'is_primary_copy', 'popularity',
+        'vote_count', 'vote_average', 'imdb_id', 'imdb_rating', 'runtime',
+        'fetched', 'metadata_status', 'last_crawled', 'remote_modified',
+        'next_crawl', 'last_updated', 'detail__id', 'detail__runtime',
+    )
 
     filters = {
         'year_from': year_from,
@@ -206,6 +222,29 @@ def attach_copies_to_page(movies_page):
         m.copy_count = len(m.all_copies)
 
 
+def _get_catalog_stats(include_manage: bool = False) -> dict:
+    """Compute global catalog metrics in a single aggregate SQL round trip."""
+    agg = dict(
+        min_year=Min('year', filter=Q(year__isnull=False)),
+        max_year=Max('year', filter=Q(year__isnull=False)),
+        total_files=Count('id'),
+        unique_movies=Count('id', filter=Q(is_primary_copy=True)),
+        missing_posters_primary=Count(
+            'id',
+            filter=Q(is_primary_copy=True) & (Q(poster_url__isnull=True) | Q(poster_url='')),
+        ),
+        missing_imdb_primary=Count('id', filter=Q(is_primary_copy=True, imdb_rating__isnull=True)),
+    )
+    if include_manage:
+        agg.update(
+            missing_posters_all=Count('id', filter=Q(poster_url__isnull=True) | Q(poster_url='')),
+            missing_imdb_all=Count('id', filter=Q(imdb_rating__isnull=True)),
+            missing_genres_all=Count('id', filter=Q(genres='')),
+            missing_clean_all=Count('id', filter=Q(clean_title='')),
+        )
+    return Movie.objects.aggregate(**agg)
+
+
 def index(request):
     """Main movie listing view with rich filters, copy grouping, and pagination."""
     movies, filters, q = get_filtered_queryset(request)
@@ -213,14 +252,10 @@ def index(request):
 
     paginator = Paginator(movies, 48)
     movies_page = paginator.get_page(page)
-    attach_copies_to_page(movies_page)
 
-    year_stats = Movie.objects.exclude(year__isnull=True).aggregate(
-        min_year=Min('year'),
-        max_year=Max('year')
-    )
-    min_year = year_stats['min_year'] or 1920
-    max_year = year_stats['max_year'] or 2026
+    stats = _get_catalog_stats(include_manage=False)
+    min_year = stats['min_year'] or 1920
+    max_year = stats['max_year'] or 2026
     years = list(range(max_year, min_year - 1, -1))
 
     languages = [
@@ -229,9 +264,12 @@ def index(request):
         'Indonesian', 'Thai', 'Tamil', 'Telugu', 'Malayalam', 'Bengali'
     ]
 
-    db_sources = list(Movie.objects.exclude(source='').values_list('source', flat=True).distinct())
-    configured_sources = list(MediaSource.objects.filter(is_active=True).values_list('name', flat=True))
-    sources_set = set(db_sources + configured_sources + ['Dhaka-Flix 14', 'Dhaka-Flix 7', 'E-Box'])
+    # Combine distinct DB sources and configured active sources in one SQL UNION query
+    combined_sources = list(
+        Movie.objects.exclude(source='').order_by().values_list('source', flat=True)
+        .union(MediaSource.objects.filter(is_active=True).order_by().values_list('name', flat=True))
+    )
+    sources_set = set(combined_sources + ['Dhaka-Flix 14', 'Dhaka-Flix 7', 'E-Box'])
     sources = sorted(list(sources_set), key=lambda x: x.lower())
 
     resolutions = [
@@ -243,19 +281,16 @@ def index(request):
 
     page_range = get_page_range(movies_page.number, paginator.num_pages)
 
-    missing_posters_count = Movie.objects.filter(is_primary_copy=True).filter(Q(poster_url__isnull=True) | Q(poster_url='')).count()
-    missing_imdb_count = Movie.objects.filter(is_primary_copy=True, imdb_rating__isnull=True).count()
-
     context = {
         'movies': movies_page,
         'query': q,
         'years': years,
         'filters': filters,
         'total_count': paginator.count,
-        'collection_count': Movie.objects.count(),
-        'unique_count': Movie.objects.filter(is_primary_copy=True).count(),
-        'missing_posters_count': missing_posters_count,
-        'missing_imdb_count': missing_imdb_count,
+        'collection_count': stats['total_files'],
+        'unique_count': stats['unique_movies'],
+        'missing_posters_count': stats['missing_posters_primary'],
+        'missing_imdb_count': stats['missing_imdb_primary'],
         'page_range': page_range,
         'rating_options': [
             ('9', 'IMDb 9.0+ ⭐'),
@@ -296,7 +331,6 @@ def search_ajax(request):
 
     paginator = Paginator(movies, 48)
     movies_page = paginator.get_page(page)
-    attach_copies_to_page(movies_page)
 
     page_range = get_page_range(movies_page.number, paginator.num_pages)
 
@@ -667,22 +701,23 @@ def get_configured_sources():
 @manage_auth_required
 def manage_dashboard(request):
     """Render the management & maintenance dashboard."""
-    total_files = Movie.objects.count()
-    unique_movies = Movie.objects.filter(is_primary_copy=True).count()
+    stats = _get_catalog_stats(include_manage=True)
+    total_files = stats['total_files']
+    unique_movies = stats['unique_movies']
 
-    missing_posters = Movie.objects.filter(Q(poster_url__isnull=True) | Q(poster_url='')).count()
+    missing_posters = stats['missing_posters_all']
     with_posters = total_files - missing_posters
     poster_pct = round((with_posters / total_files * 100), 1) if total_files else 0
 
-    missing_imdb = Movie.objects.filter(imdb_rating__isnull=True).count()
+    missing_imdb = stats['missing_imdb_all']
     with_imdb = total_files - missing_imdb
     imdb_pct = round((with_imdb / total_files * 100), 1) if total_files else 0
 
-    missing_genres = Movie.objects.filter(genres='').count()
+    missing_genres = stats['missing_genres_all']
     with_genres = total_files - missing_genres
     genres_pct = round((with_genres / total_files * 100), 1) if total_files else 0
 
-    missing_clean = Movie.objects.filter(clean_title='').count()
+    missing_clean = stats['missing_clean_all']
 
     sources_breakdown = list(Movie.objects.values('source').annotate(count=Count('id')).order_by('-count'))
     resolutions_breakdown = list(Movie.objects.values('resolution').annotate(count=Count('id')).order_by('-count'))
@@ -721,12 +756,13 @@ def manage_dashboard(request):
 @manage_auth_required
 def manage_stats_api(request):
     """API returning live metrics and progress for the management dashboard."""
-    total_files = Movie.objects.count()
-    unique_movies = Movie.objects.filter(is_primary_copy=True).count()
-    missing_posters = Movie.objects.filter(Q(poster_url__isnull=True) | Q(poster_url='')).count()
-    missing_imdb = Movie.objects.filter(imdb_rating__isnull=True).count()
-    missing_genres = Movie.objects.filter(genres='').count()
-    missing_clean = Movie.objects.filter(clean_title='').count()
+    stats = _get_catalog_stats(include_manage=True)
+    total_files = stats['total_files']
+    unique_movies = stats['unique_movies']
+    missing_posters = stats['missing_posters_all']
+    missing_imdb = stats['missing_imdb_all']
+    missing_genres = stats['missing_genres_all']
+    missing_clean = stats['missing_clean_all']
 
     return JsonResponse({
         'total_files': total_files,

@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -70,7 +71,10 @@ TEMPLATES = [
 WSGI_APPLICATION = 'moviedash.wsgi.application'
 
 # Database configuration: PostgreSQL via DATABASE_URL or SQLite with WAL mode
-DATABASE_URL = os.getenv('DATABASE_URL', '').strip().strip('"').strip("'")
+# When running `manage.py test`, isolate onto local SQLite unless TEST_DATABASE_URL is explicitly set
+RUNNING_TESTS = len(sys.argv) > 1 and sys.argv[1] == 'test'
+_RAW_DB_URL = os.getenv('TEST_DATABASE_URL', '') if RUNNING_TESTS else os.getenv('DATABASE_URL', '')
+DATABASE_URL = _RAW_DB_URL.strip().strip('"').strip("'")
 if DATABASE_URL:
     import dj_database_url
     DATABASES = {
