@@ -1022,11 +1022,18 @@ class PerformanceAndSortTests(TestCase):
             cache.clear()
 
     def test_health_endpoint(self):
+        from django.test import override_settings
+
         resp = self.client.get(reverse('health_check'))
         self.assertEqual(resp.status_code, 200)
         data = json.loads(resp.content)
         self.assertEqual(data['status'], 'ok')
         self.assertEqual(data['database'], 'sqlite')
+
+        # Platform internal HTTP health probes must still return 200 even if SECURE_SSL_REDIRECT is enabled
+        with override_settings(SECURE_SSL_REDIRECT=True):
+            ssl_resp = self.client.get(reverse('health_check'))
+            self.assertEqual(ssl_resp.status_code, 200)
 
 
 

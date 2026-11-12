@@ -28,6 +28,14 @@ if os.getenv('CSRF_TRUSTED_ORIGINS'):
 
 # Tell Django it is behind a reverse proxy (Render load balancer) that handles SSL termination
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+IS_RENDER = bool(os.getenv('RENDER') or os.getenv('RENDER_EXTERNAL_HOSTNAME'))
+SECURE_COOKIES = os.getenv('SECURE_COOKIES', str(IS_RENDER)).lower() in ('true', '1', 'yes')
+SESSION_COOKIE_SECURE = SECURE_COOKIES
+CSRF_COOKIE_SECURE = SECURE_COOKIES
+SESSION_COOKIE_HTTPONLY = True
+# Ensure platform health probes never redirect if SECURE_SSL_REDIRECT is explicitly enabled
+SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False').lower() in ('true', '1', 'yes')
+SECURE_REDIRECT_EXEMPT = [r'^health/$']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
